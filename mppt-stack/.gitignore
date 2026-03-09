@@ -1,0 +1,15 @@
+*.log
+docker-compose.override.yml
+
+mosquitto/data/
+nodered/data/
+grafana/data/
+
+nodered/data/.config.json
+nodered/data/.config.nodes.json
+nodered/data/node_modules/
+nodered/data/flows_cred.json
+
+.env
+.env.*
+

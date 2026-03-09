@@ -1,0 +1,26 @@
+{
+  "ConnectionManager_connections": {
+    "mppt-mosquitto": {
+      "configVersion": 1,
+      "certValidation": true,
+      "clientId": "mqtt-explorer-mppt",
+      "id": "mppt-mosquitto",
+      "name": "MPPT Solar",
+      "encryption": false,
+      "subscriptions": [
+        {
+          "topic": "#",
+          "qos": 0
+        },
+        {
+          "topic": "$SYS/#",
+          "qos": 0
+        }
+      ],
+      "type": "mqtt",
+      "host": "mosquitto",
+      "port": 1883,
+      "protocol": "mqtt"
+    }
+  }
+}

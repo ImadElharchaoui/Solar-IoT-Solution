@@ -1,0 +1,117 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mppt_mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks:
+      - mppt
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: mppt_influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_ADMIN_PASSWORD:-admin}
+      DOCKER_INFLUXDB_INIT_ORG: mppt
+      DOCKER_INFLUXDB_INIT_BUCKET: solar
+      DOCKER_INFLUXDB_INIT_RETENTION: 0
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - mppt
+
+  nodered:
+    build: ./nodered
+    container_name: mppt_nodered
+    restart: unless-stopped
+    ports:
+      - "1880:1880"
+    environment:
+      TZ: Africa/Casablanca
+      INFLUXDB_TOKEN: ${INFLUX_TOKEN}
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_ORG: mppt
+      INFLUXDB_BUCKET: solar
+      NODE_RED_USERNAME: admin
+      NODE_RED_PASSWORD: ${NODERED_PASSWORD}
+    volumes:
+      - ./nodered/data:/data
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - mppt
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mppt_grafana
+    restart: unless-stopped
+    user: "472:472"
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+      GF_USERS_ALLOW_SIGN_UP: false
+      GF_AUTH_ANONYMOUS_ENABLED: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - mppt
+
+  mqtt-explorer:
+    image: ghcr.io/thomasnordquist/mqtt-explorer:latest
+    container_name: mppt_mqtt_explorer
+    restart: unless-stopped
+    ports:
+      - "4000:3000"
+    environment:
+      MQTT_EXPLORER_USERNAME: admin
+      MQTT_EXPLORER_PASSWORD: admin
+    volumes:
+      - ./mqtt-explorer/settings.json:/app/data/settings.json
+      - mqtt_explorer_data:/app/data
+    networks:
+      - mppt
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  influxdb_data:
+  grafana_data:
+  mqtt_explorer_data:
+
+networks:
+  mppt:
+    driver: bridge
