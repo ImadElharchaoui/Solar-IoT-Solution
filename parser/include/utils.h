@@ -79,7 +79,8 @@ inline void currentTimestamp(char* buf, size_t sz) {
 // Returns the system hostname (used as MQTT gateway identifier).
 inline std::string hostname() {
     char buf[64] = {};
-    gethostname(buf, sizeof(buf) - 1);
+    if (gethostname(buf, sizeof(buf) - 1) != 0)
+        return "err-unknown-host";
     return buf;
 }
 
