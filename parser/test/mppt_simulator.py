@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import math
+import os
 import random
 import threading
 import time
@@ -295,7 +296,7 @@ class SimDevice:
             "datalogger": datalog_out,
         }
 
-        return telemetry, datalogger, should_publish_datalog
+        return telemetry, datalogger if should_publish_datalog else None, should_publish_datalog
 
 
 # MQTT
@@ -317,11 +318,11 @@ def publish_loop(client, dev, lock):
         
         with lock:
             client.publish(topic_state, json.dumps(tele), qos=0)
-            if should_dl:
+            if should_dl and dl is not None:
                 client.publish(topic_datalog, json.dumps(dl), qos=1, retain=True)
-        
-        dc  = len(dl["datalogger"]["daily"])
-        mc  = len(dl["datalogger"]["monthly"])
+
+        dc  = len(dl["datalogger"]["daily"])   if dl else 0
+        mc  = len(dl["datalogger"]["monthly"]) if dl else 0
         sfx = (f"  {dc}d" if dc else "") + (f"  {mc}m" if mc else "")
         print(f"  -> {dev.serial:<10} {dev.charge_mode:<14}"
               f" SOC={dev.soc:5.1f}%  Vbat={dev.vbat:5.3f}V{sfx}")
@@ -340,9 +341,6 @@ def main():
         userdata={"devices": devices},
     )
     client.on_connect = on_connect
-    # Note: Global LWT is less useful here than per-device LWT, 
-    # but we'll at least fix the payload for the global one if it were used.
-    client.will_set("mppt/sim-gw/status", payload="0", qos=1, retain=True)
 
     print(f"[MQTT] Connecting to {MQTT_HOST}:{MQTT_PORT} ...")
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
