@@ -1,5 +1,10 @@
-FROM nodered/node-red:latest
+FROM nodered/node-red:4.1.7-22-minimal
 
-RUN npm install --unsafe-perm node-red-contrib-influxdb
-RUN npm install --unsafe-perm node-red-node-email
+WORKDIR /data
+COPY package.json /data
+RUN npm install --no-update-notifier --no-fund --omit=dev
 
+WORKDIR /usr/src/node-red
+COPY settings.js /data/settings.js
+COPY flows.json /data/flows.json
+COPY devices.json /data/flows.json
