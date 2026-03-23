@@ -15,9 +15,10 @@ MqttClient::~MqttClient() {
 
 
 bool MqttClient::connect() {
-    auto opts_builder = mqtt::connect_options_builder().keep_alive_interval(std::chrono::seconds(cfg_.keepalive_s))
-                                                       .clean_session(true)
-                                                       .automatic_reconnect(false);
+    auto opts_builder = mqtt::connect_options_builder()
+                            .keep_alive_interval(std::chrono::seconds(cfg_.keepalive_s))
+                            .clean_session(true)
+                            .automatic_reconnect(false);
 
     if (!cfg_.username.empty())
         opts_builder.user_name(cfg_.username).password(cfg_.password);
