@@ -1,0 +1,10 @@
+{
+  "name": "mppt-nodered",
+  "description": "Node-RED with MPPT stack dependencies",
+  "version": "0.0.1",
+  "dependencies": {
+    "@flowfuse/node-red-dashboard": "1.30.2",
+    "node-red-contrib-influxdb": "0.7.0",
+    "node-red-node-email": "5.2.1"
+  }
+}

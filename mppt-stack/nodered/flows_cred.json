@@ -1,0 +1,9 @@
+{
+  "influxdb-config": {
+    "token": "$INFLUXDB_TOKEN"
+  },
+  "ad300653a40a9bda": {
+    "userid": "$SMTP_USER",
+    "password": "$SMTP_PASS"
+  }
+}
