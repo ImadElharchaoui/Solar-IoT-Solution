@@ -1,34 +1,23 @@
 #pragma once
 
-#include "types.h"
-#include "settings_parser.h"
+#include <string_view>
+
 #include "json.hpp"
-
-#include <string>
-#include <vector>
-
+#include "types.h"
 
 // Telemetry snapshot
 // Topic: mppt/{zone}/{gw}/{serial}/state
-nlohmann::json buildTelemetryJSON(
-    const PhocosTelemetry& t,
-    const EepromConfig&    cfg,
-    const char*            timestamp
-);
+auto build_telemetry_json(const PhocosTelemetry &t, const EepromConfig &cfg, std::string_view ts)
+    -> nlohmann::json;
 
 // Datalogger, published once in a while
 // Topic: mppt/{zone}/{gw}/{serial}/datalog
-nlohmann::json buildDataloggerJSON(
-    const EepromConfig&             cfg,
-    const DataloggerSummary&        summary,
-    const std::vector<DailyLog>&    days,
-    const std::vector<MonthlyLog>&  months,
-    const char*                     timestamp
-);
+auto build_datalogger_json(const EepromConfig      &cfg,
+                           const DataloggerSummary &summary,
+                           const DailyLogBuffer    &days,
+                           const MonthlyLogBuffer  &months,
+                           std::string_view         ts) -> nlohmann::json;
 
 // Settings published when settings have been parsed/changed
 // Topic: mppt/{zone}/{gw}/{serial}/settings
-nlohmann::json buildSettingsJSON(
-    const DeviceSettings& s,
-    const char*           timestamp
-);
+auto build_settings_json(const DeviceSettings &s, std::string_view ts) -> nlohmann::json;

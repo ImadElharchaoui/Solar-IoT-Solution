@@ -1,47 +1,49 @@
-#include "space_parser.h"
-#include "eeprom_parser.h"
-#include "printer.h"
-#include "json_builder.h"
-#include "utils.h"
-#include "lookups.h"
-
-#include <cstdio>
-#include <cstring>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <vector>
 
+#include "eeprom_parser.h"
+#include "json_builder.h"
+#include "lookups.h"
+#include "printer.h"
+#include "space_parser.h"
+#include "utils.h"
 
-int main(int argc, char* argv[]) {
+auto main(int argc, char *argv[]) -> int {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <logfile.txt> [--json]\n", argv[0]);
+        std::cerr << "Usage: " << argv[0] << " <logfile.txt> [--json]\n";
         return EXIT_FAILURE;
     }
 
     bool print_json = false;
     for (int i = 2; i < argc; ++i) {
-        if (strcmp(argv[i], "--json") == 0) print_json = true;
-        else { fprintf(stderr, "Unknown option '%s'\n", argv[i]); return EXIT_FAILURE; }
+        std::string_view arg(argv[i]);
+        if (arg == "--json") {
+            print_json = true;
+        } else {
+            std::cerr << "Unknown option '" << arg << "'\n";
+            return EXIT_FAILURE;
+        }
     }
 
     std::ifstream file(argv[1]);
     if (!file.is_open()) {
-        fprintf(stderr, "Error: cannot open '%s'\n", argv[1]);
+        std::cerr << "Error: cannot open '" << argv[1] << "'\n";
         return EXIT_FAILURE;
     }
 
-    PhocosTelemetry         tele{};
-    EepromConfig            cfg{};
-    DataloggerSummary       summary{};
-    std::vector<DailyLog>   daily_logs;
-    std::vector<MonthlyLog> monthly_logs;
+    PhocosTelemetry   tele{};
+    EepromConfig      cfg{};
+    DataloggerSummary summary{};
+    DailyLogBuffer    daily_logs;
+    MonthlyLogBuffer  monthly_logs;
 
-    bool have_tele     = false;
-    bool have_eeprom   = false;
+    bool have_tele   = false;
+    bool have_eeprom = false;
 
-    int lines_total   = 0;
-    int records_ok    = 0;
-    int records_fail  = 0;
+    int         lines_total  = 0;
+    int         records_ok   = 0;
+    int         records_fail = 0;
     std::string line;
 
     while (std::getline(file, line)) {
@@ -52,55 +54,63 @@ int main(int argc, char* argv[]) {
         }
 
         // EEPROM dump line (starts with '!')
-        if (isEepromLine(line)) {
-            std::string dump = line.substr(1);
-            if (parseEepromDump(dump.c_str(), dump.size(), cfg, summary, daily_logs, monthly_logs)) {
+        if (is_eeprom_line(line)) {
+            if (parse_eeprom_dump(line.substr(1), cfg, summary, daily_logs, monthly_logs)) {
                 have_eeprom = true;
             }
             continue;
         }
 
         // Skip anything that doesn't look like a Space line
-        if (!isSpaceLine(line)) {
+        if (!is_space_line(line)) {
             continue;
         }
 
         // Space Command response
-        tele = PhocosTelemetry{};
-        if (parsePhocosLine(line.c_str(), line.size(), tele)) {
+        PhocosTelemetry current_tele{};
+        if (parse_phocos_line(line, current_tele)) {
+            tele = current_tele;
             ++records_ok;
             have_tele = true;
         } else {
             ++records_fail;
-            fprintf(stderr, "PARSE FAILED (line %d, len=%zu): %.100s...\n", lines_total, line.size(), line.c_str());
+            std::cerr << "PARSE FAILED (line " << lines_total << ", len=" << line.size()
+                      << "): " << (line.size() > 100 ? line.substr(0, 100) : line) << "...\n";
         }
     }
 
     if (!have_tele && !have_eeprom) {
-        fprintf(stderr, "No parseable data found in '%s'\n", argv[1]);
+        std::cerr << "No parseable data found in '" << argv[1] << "'\n";
         return EXIT_FAILURE;
     }
 
-    char ts[32]; currentTimestamp(ts, sizeof(ts));
+    std::string ts = current_timestamp();
 
-    cfg.hw_version = resolveHwVersion(have_eeprom, cfg.hw_version, have_tele, tele.hw_version);
+    cfg.hw_version = resolve_hw_version(have_eeprom, cfg.hw_version, have_tele, tele.hw_version);
 
-    if (have_tele)     { printSystemState(tele, cfg, ts); }
-    if (have_eeprom)   { printEepromConfig(cfg); }
-    if (have_eeprom)   { printDataLogger(summary, daily_logs, monthly_logs); }
-
-    if (print_json) {
-        if (have_tele)
-            printf("%s\n", buildTelemetryJSON(tele, cfg, ts).dump(2).c_str());
-        if (have_eeprom)
-            printf("%s\n", buildDataloggerJSON(cfg, summary, daily_logs, monthly_logs, ts).dump(2).c_str());
+    if (have_tele) {
+        print_system_state(tele, cfg, ts);
+    }
+    if (have_eeprom) {
+        print_eeprom_config(cfg);
+        print_data_logger(summary, daily_logs, monthly_logs);
     }
 
-    printf("\n--------------------------------------------\n");
-    printf("  Lines read   : %d\n", lines_total);
-    printf("  Records OK   : %d\n", records_ok);
-    printf("  Records FAIL : %d\n", records_fail);
-    printf("--------------------------------------------\n");
+    if (print_json) {
+        if (have_tele) {
+            std::cout << build_telemetry_json(tele, cfg, ts).dump(2) << "\n";
+        }
+        if (have_eeprom) {
+            std::cout << build_datalogger_json(cfg, summary, daily_logs, monthly_logs, ts).dump(2)
+                      << "\n";
+        }
+    }
+
+    std::cout << "\n--------------------------------------------\n"
+              << "  Lines read   : " << lines_total << "\n"
+              << "  Records OK   : " << records_ok << "\n"
+              << "  Records FAIL : " << records_fail << "\n"
+              << "--------------------------------------------\n";
 
     return (records_fail == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
