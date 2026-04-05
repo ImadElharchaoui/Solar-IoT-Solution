@@ -1,0 +1,38 @@
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+ColumnLimit: 100
+
+BreakBeforeBraces: Attach
+
+DerivePointerAlignment: false
+PointerAlignment: Right
+
+AllowShortFunctionsOnASingleLine: false
+
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: true
+SpacesInParentheses: false
+SpaceBeforeAssignmentOperators: true
+
+MaxEmptyLinesToKeep: 1
+
+BinPackParameters: false
+BinPackArguments: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+Standard: Latest
+
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+
+Cpp11BracedListStyle: true
+
+NamespaceIndentation: All
+
+FixNamespaceComments: true
+
+IndentCaseLabels: true

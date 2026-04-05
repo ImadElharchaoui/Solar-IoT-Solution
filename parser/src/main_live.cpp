@@ -1,20 +1,20 @@
 /**
- * mppt_live - Live RS485 MPPT poller + settings read/write
+ * mppt_live - Live RS485 MPPT poller with MQTT + remote settings via cmd topic
  *
  * Usage:
  *   ./mppt_live <port> [options]
  *
- * Poll mode (default - runs once, use --loop for continuous):
+ * Poll mode (default - runs once):
  *   ./mppt_live /dev/ttyUSB0 --loop --zone site1 --broker 192.168.1.10
  *
- * Settings read:
+ * Settings read (print current settings, publish to MQTT, exit):
  *   ./mppt_live /dev/ttyUSB0 --settings
  *
- * Settings write:
+ * Settings write (read -> patch -> write -> verify):
  *   ./mppt_live /dev/ttyUSB0 --settings --set night_mode=1 --set evening_min=120
  *
  * Options:
- *   --loop              poll every 30 s continuously (poll mode only)
+ *   --loop              poll every 30 s continuously (subscribes to cmd topic)
  *   --zone <z>          MQTT zone segment          (default: "default")
  *   --broker <host>     MQTT broker hostname        (default: "localhost")
  *   --mqtt-port <n>     MQTT broker port            (default: 1883)
@@ -22,409 +22,502 @@
  *   --set key=value     patch a setting (requires --settings)
  *
  * Setting keys:
- *   battery_type     0-2   (V2: 0=AGM 1=Liquid 2=LFP; V3: LFP variants)
- *   capacity_ah      1-500
- *   lvd_mv           5000-15000
- *   night_thresh_mv  4000-14000
- *   night_mode       0-3   (0=Off 1=D2D 2=DD 3=MN)
- *   evening_min      0-600
- *   morning_min      0-600
- *   dim_mode         0-3
- *   dim_evening_min  0-600
- *   dim_morning_min  0-600
- *   dimming_pct      0-100
- *   base_dimming_pct 0-100
+ *   battery_type     0–2
+ *   capacity_ah      1–500
+ *   lvd_mv           5000–15000
+ *   night_thresh_mv  4000–14000
+ *   night_mode       0–3
+ *   evening_min      0–600
+ *   morning_min      0–600
+ *   dim_mode         0–3
+ *   dim_evening_min  0–600
+ *   dim_morning_min  0–600
+ *   dimming_pct      0–100
+ *   base_dimming_pct 0–100
  *   dali             0|1
  *   alc              0|1
+ *
+ * Remote settings via MQTT (--loop mode):
+ *   Publish a JSON array of &G/&H/&M/&K command strings to:
+ *     mppt/<zone>/<gateway>/<serial>/cmd  (QoS 1)
+ *
+ *   The gateway applies each command to the physical device via serial echo
+ *   protocol and publishes the result to:
+ *     mppt/<zone>/<gateway>/<serial>/ack  (QoS 1)
  */
 
-#include "serial.h"
-#include "space_parser.h"
-#include "eeprom_parser.h"
-#include "settings_parser.h"
-#include "printer.h"
-#include "json_builder.h"
-#include "mqtt_client.h"
-#include "utils.h"
-#include "lookups.h"
-
-#include <cstdio>
-#include <cstring>
-#include <cstdlib>
-#include <csignal>
-#include <string>
-#include <vector>
+#include <cstdint>
 #include <unistd.h>
 
+#include <csignal>
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include "eeprom_parser.h"
+#include "json_builder.h"
+#include "lookups.h"
+#include "mqtt_client.h"
+#include "printer.h"
+#include "serial.h"
+#include "settings_parser.h"
+#include "space_parser.h"
+#include "utils.h"
+
 static volatile sig_atomic_t g_stop = 0;
-static void on_signal(int) { g_stop = 1; }
+static void                  on_signal(int /*unused*/) {
+    g_stop = 1;
+}
 
+static constexpr int TIMEOUT_SPACE_MS  = 500;
+static constexpr int TIMEOUT_EEPROM_MS = 2000;
+static constexpr int POLL_INTERVAL_S   = 30;
 
-static constexpr int TIMEOUT_SPACE_MS    =  500;
-static constexpr int TIMEOUT_EEPROM_MS   = 2000;
-static constexpr int POLL_INTERVAL_S     =   30;
-
-
-struct PollResult {
-    PhocosTelemetry         tele{};
-    EepromConfig            cfg{};
-    DataloggerSummary       summary{};
-    std::vector<DailyLog>   daily_logs;
-    std::vector<MonthlyLog> monthly_logs;
-    bool have_tele   = false;
-    bool have_eeprom = false;
+// Inter-thread command queue - cmd callback enqueues, poll loop dequeues.
+struct PendingCmd {
+    std::string topic;
+    std::string payload_json;
 };
 
-static PollResult pollDevice(int fd) {
-    PollResult r;
+static std::mutex              g_cmd_mutex;
+static std::vector<PendingCmd> g_cmd_queue;
+
+struct PollResult {
+    PhocosTelemetry   tele{};
+    EepromConfig      cfg{};
+    DataloggerSummary summary{};
+    DailyLogBuffer    daily_logs;
+    MonthlyLogBuffer  monthly_logs;
+    bool              have_tele   = false;
+    bool              have_eeprom = false;
+};
+
+static auto poll_device(int fd) -> PollResult {
+    PollResult  r;
     std::string line;
 
-    // Drain then flush - handles both USB driver buffering and any partial
-    // response left from the previous poll cycle.
-    drainUntilQuiet(fd, 80);
+    drain_until_quiet(fd, 80);
     tcflush(fd, TCIFLUSH);
 
-    // Space command - controller sends two '\n' terminated lines
-    if (!sendCommand(fd, ' ')) {
-        fprintf(stderr, "[poll] failed to send Space command\n");
+    // Space command - controller sends two '\n'-terminated lines
+    if (!send_command(fd, ' ')) {
+        std::cerr << "[poll] failed to send Space command\n";
         return r;
     }
-
-    if (!readLine(fd, line, TIMEOUT_SPACE_MS)) {
-        fprintf(stderr, "[poll] no response to Space command (timeout %d ms)\n", TIMEOUT_SPACE_MS);
+    if (!read_line(fd, line, TIMEOUT_SPACE_MS)) {
+        std::cerr << "[poll] no response to Space command (timeout " << TIMEOUT_SPACE_MS
+                  << " ms)\n";
         return r;
     }
-
-    if (isSpaceLine(line)) {
-        if (parsePhocosLine(line.c_str(), line.size(), r.tele)) {
+    if (is_space_line(line)) {
+        if (parse_phocos_line(line, r.tele)) {
             r.have_tele = true;
-            fprintf(stderr, "[poll] Space OK  (%zu bytes, V%d)\n", line.size(), r.tele.hw_version);
+            std::cerr << "[poll] Space OK  (" << line.size() << " bytes, V"
+                      << static_cast<int>(r.tele.hw_version) << ")\n";
         } else {
-            fprintf(stderr, "[poll] Space PARSE FAILED: %.80s\n", line.c_str());
+            std::cerr << "[poll] Space PARSE FAILED: " << line.substr(0, 80) << "\n";
         }
     } else {
-        fprintf(stderr, "[poll] unexpected Space response (first byte 0x%02X): %.40s\n", (unsigned char)line[0], line.c_str());
+        std::cerr << "[poll] unexpected Space response (0x" << std::hex << std::uppercase
+                  << std::setw(2) << std::setfill('0')
+                  << static_cast<unsigned int>(
+                         static_cast<unsigned char>(line.empty() ? 0 : line[0]))
+                  << std::dec << "): " << line.substr(0, 40) << "\n";
     }
 
-    { std::string _unused; readLine(fd, _unused, 200); }
+    // Discard second Space line
+    {
+        std::string unused;
+        read_line(fd, unused, 200);
+    }
 
     // EEPROM command
-    if (!sendCommand(fd, '!')) {
-        fprintf(stderr, "[poll] failed to send EEPROM command\n");
+    if (!send_command(fd, '!')) {
+        std::cerr << "[poll] failed to send EEPROM command\n";
         return r;
     }
-
-    if (!readLine(fd, line, TIMEOUT_EEPROM_MS)) {
-        fprintf(stderr, "[poll] no response to EEPROM command (timeout %d ms)\n", TIMEOUT_EEPROM_MS);
+    if (!read_line(fd, line, TIMEOUT_EEPROM_MS)) {
+        std::cerr << "[poll] no response to EEPROM command (timeout " << TIMEOUT_EEPROM_MS
+                  << " ms)\n";
         return r;
     }
-
-    if (isEepromLine(line)) {
-        std::string dump = line.substr(1);
-        if (parseEepromDump(dump.c_str(), dump.size(), r.cfg, r.summary, r.daily_logs, r.monthly_logs)) {
+    if (is_eeprom_line(line)) {
+        std::string_view dump = std::string_view(line).substr(1);
+        if (parse_eeprom_dump(dump, r.cfg, r.summary, r.daily_logs, r.monthly_logs)) {
             r.have_eeprom = true;
-            fprintf(stderr, "[poll] EEPROM OK (%zu bytes)\n", line.size());
+            std::cerr << "[poll] EEPROM OK (" << line.size() << " bytes)\n";
         } else {
-            fprintf(stderr, "[poll] EEPROM PARSE FAILED\n");
+            std::cerr << "[poll] EEPROM PARSE FAILED\n";
         }
     } else {
-        fprintf(stderr, "[poll] unexpected EEPROM response (first byte 0x%02X)\n", (unsigned char)line[0]);
+        std::cerr << "[poll] unexpected EEPROM response (0x" << std::hex << std::uppercase
+                  << std::setw(2) << std::setfill('0')
+                  << static_cast<unsigned int>(
+                         static_cast<unsigned char>(line.empty() ? 0 : line[0]))
+                  << std::dec << ")\n";
     }
 
     return r;
 }
 
-static void printAndPublishPoll(const PollResult& r, MqttClient& mqtt,
-                                const std::string& base_topic, const char* ts) {
-    if (r.have_tele)   { printSystemState(r.tele, r.cfg, ts); }
-    if (r.have_eeprom) { printEepromConfig(r.cfg); }
-    if (r.have_eeprom) { printDataLogger(r.summary, r.daily_logs, r.monthly_logs); }
+static void print_and_publish_poll(const PollResult  &r,
+                                   MqttClient        &mqtt,
+                                   const std::string &base_topic,
+                                   std::string_view   ts) {
+    if (r.have_tele) {
+        print_system_state(r.tele, r.cfg, ts);
+    }
+    if (r.have_eeprom) {
+        print_eeprom_config(r.cfg);
+        print_data_logger(r.summary, r.daily_logs, r.monthly_logs);
+    }
 
     if (r.have_tele) {
-        const std::string payload = buildTelemetryJSON(r.tele, r.cfg, ts).dump();
-        printf("%s\n", payload.c_str());
+        const std::string PAYLOAD_STR = build_telemetry_json(r.tele, r.cfg, ts).dump();
+        std::cout << PAYLOAD_STR << "\n";
         if (mqtt.connected()) {
-            mqtt.publish(base_topic + "/state", payload);
-            fprintf(stderr, "[mqtt] -> state (%zu B)\n", payload.size());
+            mqtt.publish(base_topic + "/state", PAYLOAD_STR);
+            std::cerr << "[mqtt] -> state (" << PAYLOAD_STR.size() << " B)\n";
         }
     }
     if (r.have_eeprom) {
-        const std::string payload = buildDataloggerJSON(r.cfg, r.summary, r.daily_logs, r.monthly_logs, ts).dump();
-        printf("%s\n", payload.c_str());
+        const std::string PAYLOAD_STR =
+            build_datalogger_json(r.cfg, r.summary, r.daily_logs, r.monthly_logs, ts).dump();
+        std::cout << PAYLOAD_STR << "\n";
         if (mqtt.connected()) {
-            mqtt.publish(base_topic + "/datalog", payload, /*retain=*/true, /*qos=*/1);
-            fprintf(stderr, "[mqtt] -> datalog (%zu B)\n", payload.size());
+            mqtt.publish(base_topic + "/datalog", PAYLOAD_STR, /*retain=*/true, /*qos=*/1);
+            std::cerr << "[mqtt] -> datalog (" << PAYLOAD_STR.size() << " B)\n";
         }
     }
 }
 
-static int runPollMode(int fd, bool loop_mode,
-                       const std::string& zone, const std::string& broker_host,
-                       int broker_port) {
-    const std::string gateway = hostname();
+// Sends each &G/&H/&M/&K command string from build_write_commands() to the
+// physical device using sendAmpersandCommand().
+static auto write_commands_to_device(int fd, const std::vector<std::string> &commands) -> bool {
+    drain_until_quiet(fd, 80);
 
-    // First poll discovers the serial number needed for the MQTT LWT topic.
-    PollResult first = pollDevice(fd);
-    if (!first.have_tele && !first.have_eeprom) {
-        fprintf(stderr, "[poll] no data on first poll - aborting\n");
-        return EXIT_FAILURE;
-    }
-    first.cfg.hw_version = resolveHwVersion(first.have_eeprom, first.cfg.hw_version, first.have_tele, first.tele.hw_version);
-
-    const std::string serial     = !first.cfg.serial_number.empty() ? first.cfg.serial_number : "unknown";
-    const std::string base_topic = "mppt/" + zone + "/" + gateway + "/" + serial;
-
-    MqttConfig mqtt_cfg;
-    mqtt_cfg.host        = broker_host;
-    mqtt_cfg.port        = broker_port;
-    mqtt_cfg.client_id   = "mppt_live_" + gateway + "_" + serial;
-    mqtt_cfg.lwt_topic   = base_topic + "/online";
-    mqtt_cfg.lwt_payload = "0";
-    mqtt_cfg.lwt_retain  = true;
-
-    MqttClient mqtt(mqtt_cfg);
-    if (mqtt.connect()) {
-        mqtt.publish(base_topic + "/online", "1", /*retain=*/true);
-        fprintf(stderr, "[mqtt] connected - %s\n", base_topic.c_str());
-    } else {
-        fprintf(stderr, "[mqtt] broker unreachable - continuing without MQTT\n");
-    }
-
-    char ts[32];
-    currentTimestamp(ts, sizeof(ts));
-    printAndPublishPoll(first, mqtt, base_topic, ts);
-
-    if (!loop_mode) {
-        mqtt.disconnect();
-        return EXIT_SUCCESS;
-    }
-
-    while (!g_stop) {
-        for (int i = 0; i < POLL_INTERVAL_S && !g_stop; ++i)
-            sleep(1);
-        if (g_stop) break;
-        fprintf(stderr, "\n[poll] -- polling -----------------------\n");
-        PollResult r = pollDevice(fd);
-        if (!r.have_tele && !r.have_eeprom) {
-            fprintf(stderr, "[poll] no usable data - skipping\n");
-            continue;
+    for (const auto &cmd : commands) {
+        std::cerr << "[settings] send: " << cmd << "\n";
+        if (!send_ampersand_command(fd, cmd.c_str())) {
+            std::cerr << "[settings] echo failed for command '" << cmd << "'\n";
+            return false;
         }
-        r.cfg.hw_version = resolveHwVersion(r.have_eeprom, r.cfg.hw_version, r.have_tele, r.tele.hw_version);
-        currentTimestamp(ts, sizeof(ts));
-        printAndPublishPoll(r, mqtt, base_topic, ts);
+        usleep(10'000);
     }
 
-    mqtt.disconnect();
-    return EXIT_SUCCESS;
+    std::cerr << "[settings] write complete (" << commands.size() << " commands)\n";
+    return true;
 }
-
 
 struct SettingsContext {
-    std::vector<uint8_t> settings_bytes;
-    EepromConfig         cfg;
-    PhocosTelemetry      tele;
-    int                  hw_version = 3;
-    int                  load_state = -1;
-    bool                 have_tele   = false;
-    bool                 have_eeprom = false;
-    bool                 ok          = false;
+    EepromConfig    cfg{};
+    PhocosTelemetry tele{};
+    int             hw_version  = 3;
+    int             load_state  = -1;
+    bool            have_tele   = false;
+    bool            have_eeprom = false;
+    bool            ok          = false;
 };
 
-static SettingsContext readSettingsFromDevice(int fd) {
+static auto read_settings_from_device(int fd) -> SettingsContext {
     SettingsContext ctx;
-    std::string line;
+    std::string     line;
 
-    // 1. Space - hw_version + load_state
-    if (!sendCommand(fd, ' ')) {
-        fprintf(stderr, "[settings] failed to send Space command\n");
+    // Space - hw_version + load_state
+    if (!send_command(fd, ' ')) {
+        std::cerr << "[settings] failed to send Space command\n";
         return ctx;
     }
-    if (!readLine(fd, line, TIMEOUT_SPACE_MS)) {
-        fprintf(stderr, "[settings] no response to Space command\n");
+    if (!read_line(fd, line, TIMEOUT_SPACE_MS)) {
+        std::cerr << "[settings] no response to Space command\n";
         return ctx;
     }
-    if (!isSpaceLine(line)) {
-        fprintf(stderr, "[settings] unexpected Space response (0x%02X): %.40s\n",
-                (unsigned char)line[0], line.c_str());
+    if (!is_space_line(line)) {
+        std::cerr << "[settings] unexpected Space response (0x" << std::hex << std::uppercase
+                  << std::setw(2) << std::setfill('0')
+                  << static_cast<unsigned int>(
+                         static_cast<unsigned char>(line.empty() ? 0 : line[0]))
+                  << std::dec << "): " << line.substr(0, 40) << "\n";
         return ctx;
     }
-    if (!parsePhocosLine(line.c_str(), line.size(), ctx.tele)) {
-        fprintf(stderr, "[settings] Space PARSE FAILED: %.80s\n", line.c_str());
+    if (!parse_phocos_line(line, ctx.tele)) {
+        std::cerr << "[settings] Space PARSE FAILED: " << line.substr(0, 80) << "\n";
         return ctx;
     }
     ctx.have_tele  = true;
-    ctx.hw_version = ctx.tele.hw_version;
-    ctx.load_state = ctx.tele.load_state_raw;
-    fprintf(stderr, "[settings] Space OK (V%d, load_state=0x%02X)\n",
-            ctx.hw_version, ctx.load_state);
+    ctx.hw_version = static_cast<int>(ctx.tele.hw_version);
+    ctx.load_state = static_cast<int>(ctx.tele.load_state_raw);
+    std::cerr << "[settings] Space OK (V" << ctx.hw_version << ", load_state=0x" << std::hex
+              << std::uppercase << std::setw(2) << std::setfill('0') << ctx.load_state << std::dec
+              << ")\n";
 
-    { std::string _unused; readLine(fd, _unused, 200); }
+    {
+        std::string unused;
+        read_line(fd, unused, 200);
+    }
 
-    // 2. EEPROM dump - provides both config and the raw bytes for settings writes
-    if (!sendCommand(fd, '!')) {
-        fprintf(stderr, "[settings] failed to send EEPROM command\n");
+    // EEPROM dump
+    if (!send_command(fd, '!')) {
+        std::cerr << "[settings] failed to send EEPROM command\n";
         return ctx;
     }
-    if (!readLine(fd, line, TIMEOUT_EEPROM_MS)) {
-        fprintf(stderr, "[settings] no response to EEPROM command\n");
+    if (!read_line(fd, line, TIMEOUT_EEPROM_MS)) {
+        std::cerr << "[settings] no response to EEPROM command\n";
         return ctx;
     }
-    if (!isEepromLine(line)) {
-        fprintf(stderr, "[settings] unexpected EEPROM response (0x%02X): %.40s\n",
-                (unsigned char)line[0], line.c_str());
+    if (!is_eeprom_line(line)) {
+        std::cerr << "[settings] unexpected EEPROM response (0x" << std::hex << std::uppercase
+                  << std::setw(2) << std::setfill('0')
+                  << static_cast<unsigned int>(
+                         static_cast<unsigned char>(line.empty() ? 0 : line[0]))
+                  << std::dec << "): " << line.substr(0, 40) << "\n";
         return ctx;
     }
 
     {
-        std::string dump = line.substr(1);
-        DataloggerSummary sum;
-        std::vector<DailyLog>   dl;
-        std::vector<MonthlyLog> ml;
-        if (!parseEepromDumpRaw(dump.c_str(), dump.size(),
-                                ctx.cfg, sum, dl, ml, ctx.settings_bytes)) {
-            fprintf(stderr, "[settings] EEPROM PARSE FAILED\n");
+        std::string_view     dump = std::string_view(line).substr(1);
+        DataloggerSummary    sum;
+        DailyLogBuffer       dl;
+        MonthlyLogBuffer     ml;
+        std::vector<uint8_t> raw_bytes; // not used here; settings derived from cfg
+        if (!parse_eeprom_dump_raw(dump, ctx.cfg, sum, dl, ml, raw_bytes)) {
+            std::cerr << "[settings] EEPROM PARSE FAILED\n";
             return ctx;
         }
         ctx.have_eeprom = true;
-        if (ctx.cfg.hw_version != 0)
+        if (ctx.cfg.hw_version != 0) {
             ctx.hw_version = ctx.cfg.hw_version;
-        fprintf(stderr, "[settings] EEPROM OK (serial: %s, %zu bytes)\n",
-                ctx.cfg.serial_number.c_str(), ctx.settings_bytes.size());
-    }
-
-    if ((int)ctx.settings_bytes.size() < 99) {
-        fprintf(stderr, "[settings] EEPROM dump too short for settings window: %zu bytes\n", ctx.settings_bytes.size());
-        return ctx;
+        }
+        std::cerr << "[settings] EEPROM OK (serial: " << ctx.cfg.serial_number << ")\n";
     }
 
     ctx.ok = true;
     return ctx;
 }
 
-static void hexByte(char* out, uint8_t v) {
-    static const char hex[] = "0123456789ABCDEF";
-    out[0] = hex[v >> 4];
-    out[1] = hex[v & 0xF];
+// Called from the poll loop when a message arrives on the cmd topic.
+// Parses the JSON array of &G/&H/&M/&K strings, writes them to the device,
+// then publishes an ack.
+static void handle_cmd_payload(int                 fd,
+                               MqttClient         &mqtt,
+                               const std::string  &ack_topic,
+                               const std::string  &state_topic,
+                               const EepromConfig &current_cfg,
+                               const std::string  &payload_json) {
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(payload_json);
+    } catch (const nlohmann::json::exception &e) {
+        std::cerr << "[cmd] JSON parse error: " << e.what() << "\n";
+        const std::string ACK_PAYLOAD =
+            nlohmann::json::object(
+                {{"ok", false}, {"reason", std::string("JSON parse error: ") + e.what()}})
+                .dump();
+        mqtt.publish(ack_topic, ACK_PAYLOAD, /*retain=*/false, /*qos=*/1);
+        return;
+    }
+
+    if (!j.is_array()) {
+        std::cerr << "[cmd] payload is not a JSON array\n";
+        const std::string ACK_PAYLOAD =
+            nlohmann::json::object(
+                {{"ok", false}, {"reason", "payload must be a JSON array of command strings"}})
+                .dump();
+        mqtt.publish(ack_topic, ACK_PAYLOAD, /*retain=*/false, /*qos=*/1);
+        return;
+    }
+
+    std::vector<std::string> commands;
+    commands.reserve(j.size());
+    for (const auto &item : j) {
+        if (!item.is_string()) {
+            const std::string ACK_PAYLOAD =
+                nlohmann::json::object(
+                    {{"ok", false}, {"reason", "all array elements must be strings"}})
+                    .dump();
+            mqtt.publish(ack_topic, ACK_PAYLOAD, /*retain=*/false, /*qos=*/1);
+            return;
+        }
+        commands.emplace_back(item.get<std::string>());
+    }
+
+    if (commands.empty() || commands[0] != "&GAA3C00") {
+        const std::string ACK_PAYLOAD =
+            nlohmann::json::object(
+                {{"ok", false}, {"reason", "first command must be &GAA3C00 (EEPROM unlock)"}})
+                .dump();
+        mqtt.publish(ack_topic, ACK_PAYLOAD, /*retain=*/false, /*qos=*/1);
+        return;
+    }
+
+    std::cerr << "\n[cmd] applying " << commands.size() << " commands\n";
+    for (size_t i = 0; i < commands.size(); ++i) {
+        std::cerr << "  " << std::setw(2) << i + 1 << ". " << commands[i] << "\n";
+    }
+
+    const bool OK_STATUS = write_commands_to_device(fd, commands);
+
+    std::string ts = current_timestamp();
+
+    const std::string ACK_PAYLOAD =
+        nlohmann::json::object(
+            {
+                {"ok", OK_STATUS},
+                {"reason", OK_STATUS ? "ok" : "write failed - check serial connection"},
+                {"ts", ts},
+                {"serial", current_cfg.serial_number},
+            })
+            .dump();
+    mqtt.publish(ack_topic, ACK_PAYLOAD, /*retain=*/false, /*qos=*/1);
+    std::cerr << "[cmd] ack published: ok=" << (OK_STATUS ? "true" : "false") << "\n";
+
+    // Re-poll and re-publish state/datalog so the dashboard reflects new settings
+    if (OK_STATUS) {
+        usleep(200'000); // 200 ms - let device apply changes before polling
+        PollResult r = poll_device(fd);
+        if (r.have_tele || r.have_eeprom) {
+            r.cfg.hw_version =
+                resolve_hw_version(r.have_eeprom, r.cfg.hw_version, r.have_tele, r.tele.hw_version);
+            print_and_publish_poll(r, mqtt, state_topic.substr(0, state_topic.rfind('/')), ts);
+        }
+    }
 }
 
-static bool writeSettingsToDevice(int fd,
-                                  const std::vector<uint8_t>& old_bytes,
-                                  const std::vector<uint8_t>& new_bytes) {
-    auto eepromAddr = [](int idx) -> uint16_t {
-        return static_cast<uint16_t>(0x1000 + idx);
-    };
+static auto run_poll_mode(int                fd,
+                          bool               loop_mode,
+                          const std::string &zone,
+                          const std::string &broker_host,
+                          int                broker_port) -> int {
+    const std::string GATEWAY = hostname();
 
-    struct Write1 { int idx; uint8_t val; };
-    struct Write2 { int idx; uint16_t val; };
-
-    static const int m_fields[][2] = {
-        {W(SR_EVENING_MIN),     W(SR_EVENING_MIN)     + 1},
-        {W(SR_MORNING_MIN),     W(SR_MORNING_MIN)     + 1},
-        {W(SR_LVD_CURRENT_MV),  W(SR_LVD_CURRENT_MV)  + 1},
-        {W(SR_LVD_VOLTAGE_MV),  W(SR_LVD_VOLTAGE_MV)  + 1},
-        {W(SR_DIM_EVENING_MIN), W(SR_DIM_EVENING_MIN) + 1},
-        {W(SR_DIM_MORNING_MIN), W(SR_DIM_MORNING_MIN) + 1},
-        {W(SR_NIGHT_THRESH_MV), W(SR_NIGHT_THRESH_MV) + 1},
-        {W(SR_CAPACITY_AH),     W(SR_CAPACITY_AH)     + 1},
-    };
-    static const int h_fields[] = {
-        W(SR_NIGHT_MODE_IDX), W(SR_DIM_MODE_IDX), W(SR_LVD_MODE_VOLTAGE),
-        W(SR_BATTERY_TYPE_IDX), W(SR_DIMMING_PCT), W(SR_BASE_DIMMING_PCT),
-        W(SR_DALI_ENABLE), W(SR_ALC_DIMMING),
-    };
-
-    std::vector<Write1> writes1;
-    std::vector<Write2> writes2;
-
-    for (auto& mf : m_fields) {
-        int msb = mf[0], lsb = mf[1];
-        if (new_bytes[msb] != old_bytes[msb] || new_bytes[lsb] != old_bytes[lsb])
-            writes2.push_back({msb, (uint16_t)(((uint16_t)new_bytes[msb] << 8) | new_bytes[lsb])});
+    PollResult first = poll_device(fd);
+    if (!first.have_tele && !first.have_eeprom) {
+        std::cerr << "[poll] no data on first poll - aborting\n";
+        return EXIT_FAILURE;
     }
-    for (int idx : h_fields) {
-        if (new_bytes[idx] != old_bytes[idx])
-            writes1.push_back({idx, new_bytes[idx]});
+    first.cfg.hw_version = resolve_hw_version(
+        first.have_eeprom, first.cfg.hw_version, first.have_tele, first.tele.hw_version);
+
+    const std::string SERIAL =
+        !first.cfg.serial_number.empty() ? first.cfg.serial_number : "unknown";
+    const std::string BASE_TOPIC  = "mppt/" + zone + "/" + GATEWAY + "/" + SERIAL;
+    const std::string CMD_TOPIC   = BASE_TOPIC + "/cmd";
+    const std::string ACK_TOPIC   = BASE_TOPIC + "/ack";
+    const std::string STATE_TOPIC = BASE_TOPIC + "/state";
+
+    MqttConfig mqtt_cfg;
+    mqtt_cfg.host        = broker_host;
+    mqtt_cfg.port        = broker_port;
+    mqtt_cfg.client_id   = "mppt_live_" + GATEWAY + "_" + SERIAL;
+    mqtt_cfg.lwt_topic   = BASE_TOPIC + "/online";
+    mqtt_cfg.lwt_payload = "0";
+    mqtt_cfg.lwt_retain  = true;
+
+    MqttClient mqtt(mqtt_cfg);
+    if (mqtt.connect()) {
+        mqtt.publish(BASE_TOPIC + "/online", "1", /*retain=*/true);
+        std::cerr << "[mqtt] connected - " << BASE_TOPIC << "\n";
+    } else {
+        std::cerr << "[mqtt] broker unreachable - continuing without MQTT\n";
     }
 
-    if (writes1.empty() && writes2.empty()) {
-        fprintf(stderr, "[settings] no changes - nothing to write\n");
-        return true;
+    // Subscribe to cmd topic - enqueue for processing in the poll loop
+    if (mqtt.connected() && loop_mode) {
+        mqtt.subscribe(
+            CMD_TOPIC, /*qos=*/1, [](const std::string &topic, const std::string &payload) {
+                std::scoped_lock lock(g_cmd_mutex);
+                g_cmd_queue.emplace_back(PendingCmd{topic, payload});
+                std::cerr << "[cmd] queued message on '" << topic << "'\n";
+            });
     }
-    fprintf(stderr, "[settings] %zu byte-fields, %zu word-fields changed\n",
-            writes1.size(), writes2.size());
 
-    drainUntilQuiet(fd, 80);
+    std::string ts = current_timestamp();
+    print_and_publish_poll(first, mqtt, BASE_TOPIC, ts);
 
-    if (!sendAmpersandCommand(fd, "&GAA0900")) {
-        fprintf(stderr, "[settings] &G command failed\n");
-        return false;
+    if (!loop_mode) {
+        mqtt.disconnect();
+        return EXIT_SUCCESS;
     }
-    usleep(50'000);
 
-    char cmd[11];
-    for (const auto& w : writes1) {
-        uint16_t addr = eepromAddr(w.idx);
-        cmd[0] = '&'; cmd[1] = 'H';
-        hexByte(cmd + 2, (addr >> 8) & 0xFF);
-        hexByte(cmd + 4,  addr       & 0xFF);
-        hexByte(cmd + 6, w.val);
-        cmd[8] = '\0';
-        fprintf(stderr, "[settings] &H EEPROM[0x%04X] = 0x%02X\n", addr, w.val);
-        if (!sendAmpersandCommand(fd, cmd)) {
-            fprintf(stderr, "[settings] &H failed at offset %d\n", w.idx);
-            return false;
+    // Keep a copy of the last known cfg so handle_cmd_payload can reference the serial
+    EepromConfig current_cfg = first.cfg;
+
+    while (g_stop == 0) {
+        // Sleep in 1-second increments so we can drain the cmd queue promptly
+        for (int i = 0; i < POLL_INTERVAL_S && g_stop == 0; ++i) {
+            sleep(1);
+
+            // Drain the cmd queue once per second
+            std::vector<PendingCmd> pending;
+            {
+                std::scoped_lock lock(g_cmd_mutex);
+                pending.swap(g_cmd_queue);
+            }
+            for (const auto &cmd : pending) {
+                handle_cmd_payload(fd, mqtt, ACK_TOPIC, STATE_TOPIC, current_cfg, cmd.payload_json);
+            }
         }
-        usleep(10'000);
-    }
-    for (const auto& w : writes2) {
-        uint16_t addr = eepromAddr(w.idx);
-        cmd[0] = '&'; cmd[1] = 'M';
-        hexByte(cmd + 2, (addr >> 8) & 0xFF);
-        hexByte(cmd + 4,  addr       & 0xFF);
-        hexByte(cmd + 6, (w.val >> 8)  & 0xFF);   // MSB at lower address
-        hexByte(cmd + 8,  w.val        & 0xFF);   // LSB at higher address
-        cmd[10] = '\0';
-        fprintf(stderr, "[settings] &M EEPROM[0x%04X] = 0x%04X\n", addr, w.val);
-        if (!sendAmpersandCommand(fd, cmd)) {
-            fprintf(stderr, "[settings] &M failed at offset %d\n", w.idx);
-            return false;
+
+        if (g_stop != 0) {
+            break;
         }
-        usleep(10'000);
+
+        std::cerr << "\n[poll] -- polling -----------------------\n";
+        PollResult r = poll_device(fd);
+        if (!r.have_tele && !r.have_eeprom) {
+            std::cerr << "[poll] no usable data - skipping\n";
+            continue;
+        }
+        r.cfg.hw_version =
+            resolve_hw_version(r.have_eeprom, r.cfg.hw_version, r.have_tele, r.tele.hw_version);
+
+        if (r.have_eeprom) {
+            current_cfg = r.cfg;
+        }
+
+        ts = current_timestamp();
+        print_and_publish_poll(r, mqtt, BASE_TOPIC, ts);
     }
 
-    fprintf(stderr, "[settings] write complete\n");
-    return true;
+    mqtt.disconnect();
+    return EXIT_SUCCESS;
 }
 
-static int runSettingsMode(int fd, const std::vector<std::string>& patches,
-                           const std::string& zone, const std::string& broker_host,
-                           int broker_port) {
-    SettingsContext ctx = readSettingsFromDevice(fd);
-    if (!ctx.ok) return EXIT_FAILURE;
+static auto run_settings_mode(int                             fd,
+                              const std::vector<std::string> &patches,
+                              const std::string              &zone,
+                              const std::string              &broker_host,
+                              int                             broker_port) -> int {
+    SettingsContext ctx = read_settings_from_device(fd);
+    if (!ctx.ok) {
+        return EXIT_FAILURE;
+    }
 
-    DeviceSettings current = deviceSettingsFromEeprom(ctx.cfg, ctx.load_state);
+    DeviceSettings current = device_settings_from_eeprom(ctx.cfg, ctx.load_state);
+    std::cout << "[CURRENT SETTINGS]\n";
+    print_settings(current);
 
-    printf("[CURRENT SETTINGS]\n");
-    printSettings(current);
-
-    const std::string serial = !ctx.cfg.serial_number.empty() ? ctx.cfg.serial_number : "unknown";
-    const std::string gateway    = hostname();
-    const std::string base_topic = "mppt/" + zone + "/" + gateway + "/" + serial;
+    const std::string SERIAL  = !ctx.cfg.serial_number.empty() ? ctx.cfg.serial_number : "unknown";
+    const std::string GATEWAY = hostname();
+    const std::string BASE_TOPIC = "mppt/" + zone + "/" + GATEWAY + "/" + SERIAL;
 
     MqttConfig mqtt_cfg;
     mqtt_cfg.host      = broker_host;
     mqtt_cfg.port      = broker_port;
-    mqtt_cfg.client_id = "mppt_settings_" + gateway + "_" + serial;
+    mqtt_cfg.client_id = "mppt_settings_" + GATEWAY + "_" + SERIAL;
 
     MqttClient mqtt(mqtt_cfg);
     if (mqtt.connect()) {
-        fprintf(stderr, "[mqtt] connected - %s\n", base_topic.c_str());
-        char ts[32]; currentTimestamp(ts, sizeof(ts));
-        std::string p = buildSettingsJSON(current, ts).dump();
-        mqtt.publish(base_topic + "/settings", p, /*retain=*/true, /*qos=*/1);
-        fprintf(stderr, "[mqtt] -> settings (%zu B)\n", p.size());
+        std::cerr << "[mqtt] connected - " << BASE_TOPIC << "\n";
+        std::string       ts        = current_timestamp();
+        const std::string P_PAYLOAD = build_settings_json(current, ts).dump();
+        mqtt.publish(BASE_TOPIC + "/settings", P_PAYLOAD, /*retain=*/true, /*qos=*/1);
+        std::cerr << "[mqtt] -> settings (" << P_PAYLOAD.size() << " B)\n";
     } else {
-        fprintf(stderr, "[mqtt] broker unreachable - continuing without MQTT\n");
+        std::cerr << "[mqtt] broker unreachable - continuing without MQTT\n";
     }
 
     if (patches.empty()) {
@@ -432,108 +525,179 @@ static int runSettingsMode(int fd, const std::vector<std::string>& patches,
         return EXIT_SUCCESS;
     }
 
+    // Apply CLI patches to produce updated settings
     DeviceSettings updated = current;
-    for (const auto& kv : patches)
-        if (!applySettingsPatch(kv, updated)) {
+    for (const auto &kv : patches) {
+        if (!apply_settings_patch(kv, updated)) {
             mqtt.disconnect();
             return EXIT_FAILURE;
         }
+    }
 
-    printf("[UPDATED SETTINGS]\n");
-    printSettings(updated);
+    std::cout << "[UPDATED SETTINGS]\n";
+    print_settings(updated);
 
-    std::vector<uint8_t> new_bytes;
-    patchSettingsBytes(ctx.settings_bytes, updated, new_bytes);
+    // Build the authoritative command list from build_write_commands and send it
+    const std::vector<std::string> COMMANDS_LIST = build_write_commands(updated, ctx.hw_version);
+
+    std::cerr << "[settings] " << COMMANDS_LIST.size() << " write commands\n";
+    for (size_t i = 0; i < COMMANDS_LIST.size(); ++i) {
+        std::cerr << "  " << std::setw(2) << i + 1 << ". " << COMMANDS_LIST[i] << "\n";
+    }
 
     usleep(50'000);
-    bool written = writeSettingsToDevice(fd, ctx.settings_bytes, new_bytes);
+    const bool WRITTEN_OK = write_commands_to_device(fd, COMMANDS_LIST);
 
-    if (written && mqtt.connected()) {
-        // Re-poll telemetry so state topic reflects new config
+    if (WRITTEN_OK && mqtt.connected()) {
+        // Re-poll to pick up the updated state from the device
         usleep(200'000);
-        drainUntilQuiet(fd, 80);
+        drain_until_quiet(fd, 80);
         std::string line;
-        if (sendCommand(fd, ' ') && readLine(fd, line, TIMEOUT_SPACE_MS)
-                && isSpaceLine(line)) {
+        if (send_command(fd, ' ') && read_line(fd, line, TIMEOUT_SPACE_MS) && is_space_line(line)) {
             PhocosTelemetry tele{};
-            if (parsePhocosLine(line.c_str(), line.size(), tele)) {
-                char ts[32]; currentTimestamp(ts, sizeof(ts));
-                std::string p = buildTelemetryJSON(tele, ctx.cfg, ts).dump();
-                mqtt.publish(base_topic + "/state", p);
-                fprintf(stderr, "[mqtt] -> state (%zu B)\n", p.size());
+            if (parse_phocos_line(line, tele)) {
+                std::string       ts        = current_timestamp();
+                const std::string P_PAYLOAD = build_telemetry_json(tele, ctx.cfg, ts).dump();
+                mqtt.publish(BASE_TOPIC + "/state", P_PAYLOAD);
+                std::cerr << "[mqtt] -> state (" << P_PAYLOAD.size() << " B)\n";
             }
         }
-        { std::string _unused; readLine(fd, _unused, 200); }
+        {
+            std::string unused;
+            read_line(fd, unused, 200);
+        }
 
-        char ts[32]; currentTimestamp(ts, sizeof(ts));
-        std::string p = buildSettingsJSON(updated, ts).dump();
-        mqtt.publish(base_topic + "/settings", p, /*retain=*/true, /*qos=*/1);
-        fprintf(stderr, "[mqtt] -> settings updated (%zu B)\n", p.size());
+        std::string       ts        = current_timestamp();
+        const std::string P_PAYLOAD = build_settings_json(updated, ts).dump();
+        mqtt.publish(BASE_TOPIC + "/settings", P_PAYLOAD, /*retain=*/true, /*qos=*/1);
+        std::cerr << "[mqtt] -> settings updated (" << P_PAYLOAD.size() << " B)\n";
     }
 
     mqtt.disconnect();
-    return written ? EXIT_SUCCESS : EXIT_FAILURE;
+    return WRITTEN_OK ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-
-
-static void usage(const char* prog) {
-    fprintf(stderr,
-        "Usage: %s <port> [options]\n"
-        "\n"
-        "Poll mode (default):\n"
-        "  %s <port> [--loop] [--zone <z>] [--broker <h>] [--mqtt-port <n>]\n"
-        "\n"
-        "Settings mode:\n"
-        "  %s <port> --settings [--set key=val ...] [--zone <z>] [--broker <h>]\n"
-        "\n"
-        "Setting keys: battery_type, capacity_ah, lvd_mv, night_thresh_mv,\n"
-        "  night_mode, evening_min, morning_min, dim_mode, dim_evening_min,\n"
-        "  dim_morning_min, dimming_pct, base_dimming_pct, dali, alc\n",
-        prog, prog, prog);
+static void usage(const char *prog) {
+    std::cerr << "Usage: " << prog << " <port> [options]\n"
+              << "\n"
+              << "Poll mode (default):\n"
+              << "  " << prog << " <port> [--loop] [--zone <z>] [--broker <h>] [--mqtt-port <n>]\n"
+              << "\n"
+              << "Settings mode:\n"
+              << "  " << prog
+              << " <port> --settings [--set key=val ...] [--zone <z>] [--broker <h>]\n"
+              << "\n"
+              << "Setting keys: battery_type, capacity_ah, lvd_mv, night_thresh_mv,\n"
+              << "  night_mode, evening_min, morning_min, dim_mode, dim_evening_min,\n"
+              << "  dim_morning_min, dimming_pct, base_dimming_pct, dali, alc\n";
 }
 
-int main(int argc, char* argv[]) {
+enum class CliOption : uint8_t {
+    K_LOOP,
+    K_SETTINGS,
+    K_SET,
+    K_ZONE,
+    K_BROKER,
+    K_MQTT_PORT,
+    K_UNKNOWN
+};
+
+static auto get_cli_option(std::string_view arg) -> CliOption {
+    if (arg == "--loop") {
+        return CliOption::K_LOOP;
+    }
+    if (arg == "--settings") {
+        return CliOption::K_SETTINGS;
+    }
+    if (arg == "--set") {
+        return CliOption::K_SET;
+    }
+    if (arg == "--zone") {
+        return CliOption::K_ZONE;
+    }
+    if (arg == "--broker") {
+        return CliOption::K_BROKER;
+    }
+    if (arg == "--mqtt-port") {
+        return CliOption::K_MQTT_PORT;
+    }
+    return CliOption::K_UNKNOWN;
+}
+
+auto main(int argc, char *argv[]) -> int {
     if (argc < 2) {
         usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char* port      = argv[1];
-    bool        loop_mode     = false;
-    bool        settings_mode = false;
-    std::string zone        = "default";
-    std::string broker_host = "localhost";
-    int         broker_port = 1883;
+    const char              *port          = argv[1];
+    bool                     loop_mode     = false;
+    bool                     settings_mode = false;
+    std::string              zone          = "default";
+    std::string              broker_host   = "localhost";
+    int                      broker_port   = 1883;
     std::vector<std::string> patches;
 
     for (int i = 2; i < argc; ++i) {
-        if      (strcmp(argv[i], "--loop")      == 0) loop_mode     = true;
-        else if (strcmp(argv[i], "--settings")  == 0) settings_mode = true;
-        else if (strcmp(argv[i], "--set")       == 0 && i + 1 < argc) patches.push_back(argv[++i]);
-        else if (strcmp(argv[i], "--zone")      == 0 && i + 1 < argc) zone        = argv[++i];
-        else if (strcmp(argv[i], "--broker")    == 0 && i + 1 < argc) broker_host = argv[++i];
-        else if (strcmp(argv[i], "--mqtt-port") == 0 && i + 1 < argc) broker_port = atoi(argv[++i]);
-        else { fprintf(stderr, "[main] unknown option '%s'\n", argv[i]); usage(argv[0]); return EXIT_FAILURE; }
+        switch (get_cli_option(argv[i])) {
+            case CliOption::K_LOOP:
+                loop_mode = true;
+                break;
+            case CliOption::K_SETTINGS:
+                settings_mode = true;
+                break;
+            case CliOption::K_SET:
+                if (i + 1 < argc) {
+                    patches.emplace_back(argv[++i]);
+                }
+                break;
+            case CliOption::K_ZONE:
+                if (i + 1 < argc) {
+                    zone = argv[++i];
+                }
+                break;
+            case CliOption::K_BROKER:
+                if (i + 1 < argc) {
+                    broker_host = argv[++i];
+                }
+                break;
+            case CliOption::K_MQTT_PORT:
+                if (i + 1 < argc) {
+                    broker_port = std::atoi(argv[++i]);
+                }
+                break;
+            case CliOption::K_UNKNOWN:
+            default:
+                std::cerr << "[main] unknown option '" << argv[i] << "'\n";
+                usage(argv[0]);
+                return EXIT_FAILURE;
+        }
     }
 
     signal(SIGTERM, on_signal);
-    signal(SIGINT,  on_signal);
+    signal(SIGINT, on_signal);
 
-    int fd = openSerial(port);
-    if (fd < 0) return EXIT_FAILURE;
-    fprintf(stderr, "[main] opened %s %s\n", port,
-            settings_mode ? " (settings mode)" : loop_mode ? " (loop mode)" : "");
+    int fd = open_serial(port);
+    if (fd < 0) {
+        return EXIT_FAILURE;
+    }
 
-    // Drain bytes buffered by the USB driver from any previous process.
-    drainUntilQuiet(fd, 150);
+    std::cerr << "[main] opened " << port;
 
-    int rc;
-    if (settings_mode)
-        rc = runSettingsMode(fd, patches, zone, broker_host, broker_port);
-    else
-        rc = runPollMode(fd, loop_mode, zone, broker_host, broker_port);
+    if (settings_mode) {
+        std::cerr << " (settings mode)";
+    } else if (loop_mode) {
+        std::cerr << " (loop mode)";
+    }
+
+    std::cerr << "\n";
+
+    drain_until_quiet(fd, 150);
+
+    const int RC_VAL = settings_mode
+                           ? run_settings_mode(fd, patches, zone, broker_host, broker_port)
+                           : run_poll_mode(fd, loop_mode, zone, broker_host, broker_port);
 
     close(fd);
-    return rc;
+    return RC_VAL;
 }

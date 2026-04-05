@@ -1,26 +1,19 @@
 #pragma once
 
-#include "types.h"
-
+#include <string_view>
 #include <vector>
 
+#include "types.h"
 
-bool parseEepromDump(
-    const char*                  raw,
-    size_t                       len,
-    EepromConfig&                cfg,
-    DataloggerSummary&           summary,
-    std::vector<DailyLog>&       daily_logs,
-    std::vector<MonthlyLog>&     monthly_logs
-);
+auto parse_eeprom_dump(std::string_view   resp,
+                       EepromConfig      &cfg,
+                       DataloggerSummary &summary,
+                       DailyLogBuffer    &daily_logs,
+                       MonthlyLogBuffer  &monthly_logs) -> bool;
 
-
-bool parseEepromDumpRaw(
-    const char*              raw,
-    size_t                   len,
-    EepromConfig&            cfg,
-    DataloggerSummary&       summary,
-    std::vector<DailyLog>&   daily_logs,
-    std::vector<MonthlyLog>& monthly_logs,
-    std::vector<uint8_t>&    out_bytes
-);
+auto parse_eeprom_dump_raw(std::string_view      resp,
+                           EepromConfig         &cfg,
+                           DataloggerSummary    &summary,
+                           DailyLogBuffer       &daily_logs,
+                           MonthlyLogBuffer     &monthly_logs,
+                           std::vector<uint8_t> &out_bytes) -> bool;

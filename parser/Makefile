@@ -1,5 +1,5 @@
 CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Iinclude -MMD -MP
+CXXFLAGS := -std=c++17 -Wall -Wextra -Werror -Wsign-conversion -Wold-style-cast -Wconversion -Wshadow -Iinclude -MMD -MP
 LDFLAGS  :=
 
 BUILD := build

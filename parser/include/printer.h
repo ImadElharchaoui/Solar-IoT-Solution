@@ -1,25 +1,16 @@
 #pragma once
 
+#include <string_view>
+
 #include "types.h"
 
-#include <vector>
-
-
 // Prints the parsed telemetry to stdout in a human-readable format.
-void printSystemState(
-    const PhocosTelemetry&  t,
-    const EepromConfig&     cfg,
-    const char*             timestamp
-);
-
+void print_system_state(const PhocosTelemetry &t, const EepromConfig &cfg, std::string_view ts);
 
 // Prints all configuration fields read from the EEPROM dump.
-void printEepromConfig(const EepromConfig& cfg);
-
+void print_eeprom_config(const EepromConfig &cfg);
 
 // Prints the datalogger summary, daily table and monthly table.
-void printDataLogger(
-    const DataloggerSummary&        summary,
-    const std::vector<DailyLog>&    daily_logs,
-    const std::vector<MonthlyLog>&  monthly_logs
-);
+void print_data_logger(const DataloggerSummary &summary,
+                       const DailyLogBuffer    &days,
+                       const MonthlyLogBuffer  &months);

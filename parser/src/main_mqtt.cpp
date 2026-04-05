@@ -5,171 +5,220 @@
  *   ./build/mppt_mqtt <logfile.txt>
  */
 
-#include "space_parser.h"
-#include "eeprom_parser.h"
-#include "printer.h"
-#include "json_builder.h"
-#include "mqtt_client.h"
-#include "utils.h"
-#include "lookups.h"
-
-#include <cstdio>
-#include <cstring>
+#include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <vector>
+#include <string_view>
 
+#include "eeprom_parser.h"
+#include "json_builder.h"
+#include "lookups.h"
+#include "mqtt_client.h"
+#include "printer.h"
+#include "space_parser.h"
+#include "utils.h"
 
-static void printUsage(const char* prog) {
-    fprintf(stderr, "Usage: %s <logfile.txt> [--zone <z>] [--broker <h>] [--mqtt-port <n>]\n", prog);
+static void print_usage(const char *prog) {
+    std::cerr << "Usage: " << prog
+              << " <logfile.txt> [--zone <z>] [--broker <h>] [--mqtt-port <n>]\n";
 }
 
+enum class CliOption : uint8_t { K_ZONE, K_BROKER, K_MQTT_PORT, K_UNKNOWN };
 
-int main(int argc, char* argv[]) {
+static auto get_cli_option(std::string_view arg) -> CliOption {
+    if (arg == "--zone") {
+        return CliOption::K_ZONE;
+    }
+    if (arg == "--broker") {
+        return CliOption::K_BROKER;
+    }
+    if (arg == "--mqtt-port") {
+        return CliOption::K_MQTT_PORT;
+    }
+    return CliOption::K_UNKNOWN;
+}
+
+auto main(int argc, char *argv[]) -> int {
     if (argc < 2) {
-        printUsage(argv[0]);
+        print_usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char* log_path    = argv[1];
+    const char *log_path    = argv[1];
     std::string zone        = "default";
     std::string broker_host = "localhost";
     int         broker_port = 1883;
     std::string gateway     = hostname();
 
     for (int i = 2; i < argc; ++i) {
-        if      (strcmp(argv[i], "--zone")      == 0 && i + 1 < argc) zone        = argv[++i];
-        else if (strcmp(argv[i], "--broker")    == 0 && i + 1 < argc) broker_host = argv[++i];
-        else if (strcmp(argv[i], "--mqtt-port") == 0 && i + 1 < argc) broker_port = atoi(argv[++i]);
-        else { fprintf(stderr, "Unknown option '%s'\n", argv[i]); printUsage(argv[0]); return EXIT_FAILURE; }
+        const CliOption OPT = get_cli_option(argv[i]);
+
+        switch (OPT) {
+            case CliOption::K_ZONE:
+                if (i + 1 < argc) {
+                    zone = argv[++i];
+                }
+                break;
+            case CliOption::K_BROKER:
+                if (i + 1 < argc) {
+                    broker_host = argv[++i];
+                }
+                break;
+            case CliOption::K_MQTT_PORT:
+                if (i + 1 < argc) {
+                    broker_port = std::atoi(argv[++i]);
+                }
+                break;
+            case CliOption::K_UNKNOWN:
+            default:
+                std::cerr << "Unknown option '" << argv[i] << "'\n";
+                print_usage(argv[0]);
+                return EXIT_FAILURE;
+        }
     }
 
     std::ifstream file(log_path);
     if (!file.is_open()) {
-        fprintf(stderr, "Error: cannot open '%s'\n", log_path);
+        std::cerr << "Error: cannot open '" << log_path << "'\n";
         return EXIT_FAILURE;
     }
 
-    PhocosTelemetry         tele{};
-    EepromConfig            cfg{};
-    DataloggerSummary       summary{};
-    std::vector<DailyLog>   daily_logs;
-    std::vector<MonthlyLog> monthly_logs;
+    PhocosTelemetry   tele{};
+    EepromConfig      cfg{};
+    DataloggerSummary summary{};
+    DailyLogBuffer    daily_logs;
+    MonthlyLogBuffer  monthly_logs;
 
     bool have_tele   = false;
     bool have_eeprom = false;
 
-    int lines_total   = 0;
-    int records_ok    = 0;
-    int records_fail  = 0;
+    int lines_total  = 0;
+    int records_ok   = 0;
+    int records_fail = 0;
 
     std::string line;
     while (std::getline(file, line)) {
         ++lines_total;
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
 
-        if (isEepromLine(line)) {
-            std::string dump = line.substr(1);
-            if (parseEepromDump(dump.c_str(), dump.size(),
-                                cfg, summary, daily_logs, monthly_logs)) {
+        if (is_eeprom_line(line)) {
+            std::string_view dump = std::string_view(line).substr(1);
+            if (parse_eeprom_dump(dump, cfg, summary, daily_logs, monthly_logs)) {
                 have_eeprom = true;
             }
             continue;
         }
-        if (!isSpaceLine(line)) { continue; }
+        if (!is_space_line(line)) {
+            continue;
+        }
 
         tele = PhocosTelemetry{};
-        if (parsePhocosLine(line.c_str(), line.size(), tele)) {
+        if (parse_phocos_line(line, tele)) {
             ++records_ok;
             have_tele = true;
         } else {
             ++records_fail;
-            fprintf(stderr, "PARSE FAILED (line %d, len=%zu): %.100s...\n",
-                    lines_total, line.size(), line.c_str());
+            std::cerr << "PARSE FAILED (line " << lines_total << ", len=" << line.size()
+                      << "): " << (line.size() > 100 ? line.substr(0, 100) : line) << "...\n";
         }
     }
 
     if (!have_tele && !have_eeprom) {
-        fprintf(stderr, "No parseable data found in '%s'\n", log_path);
+        std::cerr << "No parseable data found in '" << log_path << "'\n";
         return EXIT_FAILURE;
     }
 
-    cfg.hw_version = resolveHwVersion(have_eeprom, cfg.hw_version, have_tele, tele.hw_version);
+    cfg.hw_version = resolve_hw_version(have_eeprom, cfg.hw_version, have_tele, tele.hw_version);
 
-    char ts[32];
-    currentTimestamp(ts, sizeof(ts));
+    std::string ts = current_timestamp();
 
-    if (have_tele)   { printSystemState(tele, cfg, ts); }
-    if (have_eeprom) { printEepromConfig(cfg); }
-    if (have_eeprom) { printDataLogger(summary, daily_logs, monthly_logs); }
+    if (have_tele) {
+        print_system_state(tele, cfg, ts);
+    }
+    if (have_eeprom) {
+        print_eeprom_config(cfg);
+        print_data_logger(summary, daily_logs, monthly_logs);
+    }
 
-    const std::string serial =
-        !cfg.serial_number.empty() ? cfg.serial_number : "unknown";
+    const std::string SERIAL = !cfg.serial_number.empty() ? cfg.serial_number : "unknown";
 
     //   mppt/{zone}/{gateway}/{serial}/online   LWT retained
     //   mppt/{zone}/{gateway}/{serial}/state    telemetry  QoS 0 (fire and forget)
     //   mppt/{zone}/{gateway}/{serial}/datalog  EEPROM log QoS 1 + retained (once/day)
-    const std::string base_topic = "mppt/" + zone + "/" + gateway + "/" + serial;
+    const std::string BASE_TOPIC = "mppt/" + zone + "/" + gateway + "/" + SERIAL;
 
     MqttConfig mqtt_cfg;
     mqtt_cfg.host        = broker_host;
     mqtt_cfg.port        = broker_port;
-    mqtt_cfg.client_id   = "mppt_" + gateway + "_" + serial;
-    mqtt_cfg.lwt_topic   = base_topic + "/online";
+    mqtt_cfg.client_id   = "mppt_" + gateway + "_" + SERIAL;
+    mqtt_cfg.lwt_topic   = BASE_TOPIC + "/online";
     mqtt_cfg.lwt_payload = "0";
     mqtt_cfg.lwt_retain  = true;
 
-    fprintf(stderr, "\n[mqtt] broker   = %s:%d\n",   broker_host.c_str(), broker_port);
-    fprintf(stderr, "[mqtt] zone     = %s\n",         zone.c_str());
-    fprintf(stderr, "[mqtt] serial   = %s\n",         serial.c_str());
-    fprintf(stderr, "[mqtt] base     = %s\n",         base_topic.c_str());
-    fprintf(stderr, "[mqtt] lwt      = %s/online -> \"0\"\n", base_topic.c_str());
+    std::cerr << "\n[mqtt] broker   = " << broker_host << ":" << broker_port << "\n";
+    std::cerr << "[mqtt] zone     = " << zone << "\n";
+    std::cerr << "[mqtt] serial   = " << SERIAL << "\n";
+    std::cerr << "[mqtt] base     = " << BASE_TOPIC << "\n";
+    std::cerr << "[mqtt] lwt      = " << BASE_TOPIC << "/online -> \"0\"\n";
 
     MqttClient client(mqtt_cfg);
-    bool connected = client.connect();
+    bool       connected = client.connect();
 
     if (connected) {
         // Mark device online (retained, broker auto-publishes to new subscribers)
-        client.publish(base_topic + "/online", "1", /*retain=*/true);
+        client.publish(BASE_TOPIC + "/online", "1", /*retain=*/true);
 
         //  1: Telemetry (always, QoS 0)
         if (have_tele) {
-            const nlohmann::json tele_json = buildTelemetryJSON(tele, cfg, ts);
-            const std::string tele_payload = tele_json.dump();
+            const nlohmann::json TELE_JSON    = build_telemetry_json(tele, cfg, ts);
+            const std::string    TELE_PAYLOAD = TELE_JSON.dump();
 
-            fprintf(stderr, "[mqtt] telemetry  %zu bytes -> %s/state\n", tele_payload.size(), base_topic.c_str());
+            std::cerr << "[mqtt] telemetry  " << TELE_PAYLOAD.size() << " bytes -> " << BASE_TOPIC
+                      << "/state\n";
 
-            if (client.publish(base_topic + "/state", tele_payload, /*retain=*/false, /*qos=*/0)) {
-                fprintf(stderr, "[mqtt] state OK\n");
+            if (client.publish(BASE_TOPIC + "/state",
+                               TELE_PAYLOAD,
+                               /*retain=*/false,
+                               /*qos=*/0)) {
+                std::cerr << "[mqtt] state OK\n";
             } else {
-                fprintf(stderr, "[mqtt] state FAILED\n");
+                std::cerr << "[mqtt] state FAILED\n";
             }
         }
 
         // 2: Datalogger (only when EEPROM available, QoS 1 + retained)
         if (have_eeprom) {
-            const nlohmann::json dl_json = buildDataloggerJSON(cfg, summary, daily_logs, monthly_logs, ts);
-            const std::string dl_payload = dl_json.dump();
+            const nlohmann::json DL_JSON =
+                build_datalogger_json(cfg, summary, daily_logs, monthly_logs, ts);
+            const std::string DL_PAYLOAD = DL_JSON.dump();
 
-            fprintf(stderr, "[mqtt] datalogger %zu bytes -> %s/datalog\n", dl_payload.size(), base_topic.c_str());
+            std::cerr << "[mqtt] datalogger " << DL_PAYLOAD.size() << " bytes -> " << BASE_TOPIC
+                      << "/datalog\n";
 
-            if (client.publish(base_topic + "/datalog", dl_payload, /*retain=*/true, /*qos=*/1)) {
-                fprintf(stderr, "[mqtt] datalog OK\n");
+            if (client.publish(BASE_TOPIC + "/datalog",
+                               DL_PAYLOAD,
+                               /*retain=*/true,
+                               /*qos=*/1)) {
+                std::cerr << "[mqtt] datalog OK\n";
             } else {
-                fprintf(stderr, "[mqtt] datalog FAILED\n");
+                std::cerr << "[mqtt] datalog FAILED\n";
             }
         }
 
         client.disconnect();
     } else {
-        fprintf(stderr, "[mqtt] connection failed - skipping publish\n");
+        std::cerr << "[mqtt] connection failed - skipping publish\n";
     }
 
-    printf("\n--------------------------------------------\n");
-    printf("  Lines read   : %d\n", lines_total);
-    printf("  Records OK   : %d\n", records_ok);
-    printf("  Records FAIL : %d\n", records_fail);
-    printf("--------------------------------------------\n");
+    std::cout << "\n--------------------------------------------\n"
+              << "  Lines read   : " << lines_total << "\n"
+              << "  Records OK   : " << records_ok << "\n"
+              << "  Records FAIL : " << records_fail << "\n"
+              << "--------------------------------------------\n";
 
     return (records_fail == 0 && connected) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
