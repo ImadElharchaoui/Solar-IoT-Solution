@@ -11,6 +11,12 @@ static inline auto yn(bool b) -> const char * {
     return b ? "Yes" : "No";
 }
 
+static inline auto row = [](const char* label, const auto& value, const char* unit = "") {
+    std::cout << "  "
+              << std::left << std::setw(36) << label
+              << " " << value << unit << "\n";
+};
+
 void print_system_state(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts) {
     const std::string &dev_type  = !cfg.device_id.empty() ? cfg.device_id : "Unknown";
     const std::string &serial    = !cfg.serial_number.empty() ? cfg.serial_number : "N/A";
@@ -20,10 +26,6 @@ void print_system_state(const PhocosTelemetry &t, const EepromSettings &cfg, std
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║           System State                   ║\n"
               << "╚══════════════════════════════════════════╝\n";
-
-    auto row = [](const char *label, const auto &value, const char *unit = "") {
-        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
-    };
 
     std::cout << "\n[General]\n";
     row("Timestamp", ts);
@@ -143,9 +145,6 @@ void print_eeprom_settings(const EepromSettings &cfg) {
               << "║           Device Settings                ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
-    auto row = [](const char *label, const auto &value, const char *unit = "") {
-        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
-    };
 
     std::cout << "\n[Identity]\n";
     row("Device ID", cfg.device_id);
@@ -257,10 +256,6 @@ void print_data_logger(const DataloggerSummary &s,
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║           Data Logger                    ║\n"
               << "╚══════════════════════════════════════════╝\n";
-
-    auto row = [](const char *label, const auto &value, const char *unit = "") {
-        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
-    };
 
     std::cout << "\n[General]\n";
     row("Recorded Days", s.num_days);
