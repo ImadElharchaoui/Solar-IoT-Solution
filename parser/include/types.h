@@ -225,9 +225,9 @@ struct MonthlyLogBuffer {
     std::size_t                                     count = 0;
 };
 
-// All configuration fields read from the EEPROM dump.
+// All settings fields read from the EEPROM dump.
 // Parsed from the same '!' dump line as the datalogger data.
-struct EepromConfig {
+struct EepromSettings {
     // Identity
     std::string device_id;
     std::string serial_number;

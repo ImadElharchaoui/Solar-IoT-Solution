@@ -7,12 +7,12 @@
 
 // Telemetry snapshot
 // Topic: mppt/{zone}/{gw}/{serial}/state
-auto build_telemetry_json(const PhocosTelemetry &t, const EepromConfig &cfg, std::string_view ts)
+auto build_telemetry_json(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts)
     -> nlohmann::json;
 
 // Datalogger, published once in a while
 // Topic: mppt/{zone}/{gw}/{serial}/datalog
-auto build_datalogger_json(const EepromConfig      &cfg,
+auto build_datalogger_json(const EepromSettings      &cfg,
                            const DataloggerSummary &summary,
                            const DailyLogBuffer    &days,
                            const MonthlyLogBuffer  &months,

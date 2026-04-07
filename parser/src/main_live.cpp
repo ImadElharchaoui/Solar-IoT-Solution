@@ -87,7 +87,7 @@ static std::vector<PendingCmd> g_cmd_queue;
 
 struct PollResult {
     PhocosTelemetry   tele{};
-    EepromConfig      cfg{};
+    EepromSettings      cfg{};
     DataloggerSummary summary{};
     DailyLogBuffer    daily_logs;
     MonthlyLogBuffer  monthly_logs;
@@ -171,7 +171,7 @@ static void print_and_publish_poll(const PollResult  &r,
         print_system_state(r.tele, r.cfg, ts);
     }
     if (r.have_eeprom) {
-        print_eeprom_config(r.cfg);
+        print_eeprom_settings(r.cfg);
         print_data_logger(r.summary, r.daily_logs, r.monthly_logs);
     }
 
@@ -213,7 +213,7 @@ static auto write_commands_to_device(int fd, const std::vector<std::string> &com
 }
 
 struct SettingsContext {
-    EepromConfig    cfg{};
+    EepromSettings    cfg{};
     PhocosTelemetry tele{};
     int             hw_version  = 3;
     int             load_state  = -1;
@@ -305,7 +305,7 @@ static void handle_cmd_payload(int                 fd,
                                MqttClient         &mqtt,
                                const std::string  &ack_topic,
                                const std::string  &state_topic,
-                               const EepromConfig &current_cfg,
+                               const EepromSettings &current_cfg,
                                const std::string  &payload_json) {
     nlohmann::json j;
     try {
@@ -443,7 +443,7 @@ static auto run_poll_mode(int                fd,
     }
 
     // Keep a copy of the last known cfg so handle_cmd_payload can reference the serial
-    EepromConfig current_cfg = first.cfg;
+    EepromSettings current_cfg = first.cfg;
 
     while (g_stop == 0) {
         // Sleep in 1-second increments so we can drain the cmd queue promptly

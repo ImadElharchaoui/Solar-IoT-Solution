@@ -11,7 +11,7 @@ static inline auto yn(bool b) -> const char * {
     return b ? "Yes" : "No";
 }
 
-void print_system_state(const PhocosTelemetry &t, const EepromConfig &cfg, std::string_view ts) {
+void print_system_state(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts) {
     const std::string &dev_type  = !cfg.device_id.empty() ? cfg.device_id : "Unknown";
     const std::string &serial    = !cfg.serial_number.empty() ? cfg.serial_number : "N/A";
     const std::string &prod_date = !cfg.production_date.empty() ? cfg.production_date : "N/A";
@@ -138,9 +138,9 @@ void print_system_state(const PhocosTelemetry &t, const EepromConfig &cfg, std::
     }
 }
 
-void print_eeprom_config(const EepromConfig &cfg) {
+void print_eeprom_settings(const EepromSettings &cfg) {
     std::cout << "\n╔══════════════════════════════════════════╗\n"
-              << "║           Device Configuration           ║\n"
+              << "║           Device Settings                ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
     auto row = [](const char *label, const auto &value, const char *unit = "") {
@@ -152,7 +152,7 @@ void print_eeprom_config(const EepromConfig &cfg) {
     row("Serial Number", cfg.serial_number);
     row("Production Date", cfg.production_date);
 
-    std::cout << "\n[Battery Configuration]\n";
+    std::cout << "\n[Battery Settings]\n";
     row("Type", cfg.battery_type);
     row("Capacity", std::to_string(cfg.settings.capacity_ah) + " Ah");
     row("Battery Op. Time", std::to_string(cfg.battery_op_days) + " Days");

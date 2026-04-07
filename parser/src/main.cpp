@@ -33,7 +33,7 @@ auto main(int argc, char *argv[]) -> int {
     }
 
     PhocosTelemetry   tele{};
-    EepromConfig      cfg{};
+    EepromSettings      cfg{};
     DataloggerSummary summary{};
     DailyLogBuffer    daily_logs;
     MonthlyLogBuffer  monthly_logs;
@@ -92,7 +92,7 @@ auto main(int argc, char *argv[]) -> int {
         print_system_state(tele, cfg, ts);
     }
     if (have_eeprom) {
-        print_eeprom_config(cfg);
+        print_eeprom_settings(cfg);
         print_data_logger(summary, daily_logs, monthly_logs);
     }
 

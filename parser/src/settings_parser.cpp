@@ -109,7 +109,7 @@ auto build_write_commands(const DeviceSettings &s, int hw_version) -> std::vecto
     return cmds;
 }
 
-auto device_settings_from_eeprom(const EepromConfig &cfg, int load_state) -> DeviceSettings {
+auto device_settings_from_eeprom(const EepromSettings &cfg, int load_state) -> DeviceSettings {
     DeviceSettings s = cfg.settings;
     s.hw_version     = cfg.hw_version;
 

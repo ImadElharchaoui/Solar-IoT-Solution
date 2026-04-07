@@ -7,9 +7,9 @@
 #include "lookups.h"
 #include "utils.h"
 
-// Reads all configuration fields from a parsed byte vector into an
-// EepromConfig.
-static auto parse_eeprom_config(const std::vector<uint8_t> &data, EepromConfig &cfg) -> bool {
+// Reads all settings fields from a parsed byte vector into an
+// EepromSettings.
+static auto parse_eeprom_settings(const std::vector<uint8_t> &data, EepromSettings &cfg) -> bool {
     if (data.size() < 144) {
         return false;
     }
@@ -186,11 +186,11 @@ static void parse_monthly_logs(const std::vector<uint8_t> &data,
 }
 
 static auto parse_eeprom_bytes(const std::vector<uint8_t> &data,
-                               EepromConfig               &cfg,
+                               EepromSettings               &cfg,
                                DataloggerSummary          &summary,
                                DailyLogBuffer             &daily_logs,
                                MonthlyLogBuffer           &monthly_logs) -> bool {
-    if (!parse_eeprom_config(data, cfg)) {
+    if (!parse_eeprom_settings(data, cfg)) {
         return false;
     }
 
@@ -230,7 +230,7 @@ static auto decode_eeprom_line(std::string_view sv, std::vector<uint8_t> &out) -
 }
 
 auto parse_eeprom_dump(std::string_view   resp,
-                       EepromConfig      &cfg,
+                       EepromSettings      &cfg,
                        DataloggerSummary &summary,
                        DailyLogBuffer    &daily_logs,
                        MonthlyLogBuffer  &monthly_logs) -> bool {
@@ -242,7 +242,7 @@ auto parse_eeprom_dump(std::string_view   resp,
 }
 
 auto parse_eeprom_dump_raw(std::string_view      resp,
-                           EepromConfig         &cfg,
+                           EepromSettings         &cfg,
                            DataloggerSummary    &summary,
                            DailyLogBuffer       &daily_logs,
                            MonthlyLogBuffer     &monthly_logs,

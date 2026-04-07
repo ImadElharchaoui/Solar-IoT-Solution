@@ -9,7 +9,7 @@ static inline auto v16(uint16_t mv) -> double {
     return mv_to_v(static_cast<uint32_t>(mv));
 }
 
-auto build_telemetry_json(const PhocosTelemetry &t, const EepromConfig &cfg, std::string_view ts)
+auto build_telemetry_json(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts)
     -> nlohmann::json {
     const std::string &serial    = !cfg.serial_number.empty() ? cfg.serial_number : "Unknown";
     const std::string &prod_date = !cfg.production_date.empty() ? cfg.production_date : "";
@@ -129,7 +129,7 @@ static auto log_entries_to_json(const LogEntry *entries, std::size_t count, cons
     return arr;
 }
 
-auto build_datalogger_json(const EepromConfig      &cfg,
+auto build_datalogger_json(const EepromSettings      &cfg,
                            const DataloggerSummary &s,
                            const DailyLogBuffer    &days,
                            const MonthlyLogBuffer  &months,
