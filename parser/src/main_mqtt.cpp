@@ -86,7 +86,7 @@ auto main(int argc, char *argv[]) -> int {
     }
 
     PhocosTelemetry   tele{};
-    EepromSettings      cfg{};
+    EepromSettings      settings{};
     DataloggerSummary summary{};
     DailyLogBuffer    daily_logs;
     MonthlyLogBuffer  monthly_logs;
@@ -107,7 +107,7 @@ auto main(int argc, char *argv[]) -> int {
 
         if (is_eeprom_line(line)) {
             std::string_view dump = std::string_view(line).substr(1);
-            if (parse_eeprom_dump(dump, cfg, summary, daily_logs, monthly_logs)) {
+            if (parse_eeprom_dump(dump, settings, summary, daily_logs, monthly_logs)) {
                 have_eeprom = true;
             }
             continue;
@@ -132,32 +132,37 @@ auto main(int argc, char *argv[]) -> int {
         return EXIT_FAILURE;
     }
 
-    cfg.hw_version = resolve_hw_version(have_eeprom, cfg.hw_version, have_tele, tele.hw_version);
+    settings.hw_version = resolve_hw_version(have_eeprom, settings.hw_version, have_tele, tele.hw_version);
 
-    std::string ts = current_timestamp();
+    std::time_t ts = current_timestamp();
 
     if (have_tele) {
-        print_system_state(tele, cfg, ts);
+        print_system_state(tele, settings, ts);
+        print_state_json(tele, settings, ts);
     }
     if (have_eeprom) {
-        print_eeprom_settings(cfg);
+        print_eeprom_config(settings);
         print_data_logger(summary, daily_logs, monthly_logs);
+        print_info_json(settings);
+        print_settings_json(settings.settings, ts);
     }
 
-    const std::string SERIAL = !cfg.serial_number.empty() ? cfg.serial_number : "unknown";
+    const std::string SERIAL = !settings.serial_number.empty() ? settings.serial_number : "unknown";
 
-    //   mppt/{zone}/{gateway}/{serial}/online   LWT retained
-    //   mppt/{zone}/{gateway}/{serial}/state    telemetry  QoS 0 (fire and forget)
-    //   mppt/{zone}/{gateway}/{serial}/datalog  EEPROM log QoS 1 + retained (once/day)
+    //   mppt/{zone}/{gateway}/{serial}/online    LWT retained
+    //   mppt/{zone}/{gateway}/{serial}/info      static identity  QoS 1 + retained (once on boot)
+    //   mppt/{zone}/{gateway}/{serial}/settings  device settings  QoS 1 + retained (once on boot)
+    //   mppt/{zone}/{gateway}/{serial}/state     telemetry        QoS 0 (fire and forget)
+    //   mppt/{zone}/{gateway}/{serial}/datalog   EEPROM log       QoS 1 + retained (once/day)
     const std::string BASE_TOPIC = "mppt/" + zone + "/" + gateway + "/" + SERIAL;
 
-    MqttConfig mqtt_cfg;
-    mqtt_cfg.host        = broker_host;
-    mqtt_cfg.port        = broker_port;
-    mqtt_cfg.client_id   = "mppt_" + gateway + "_" + SERIAL;
-    mqtt_cfg.lwt_topic   = BASE_TOPIC + "/online";
-    mqtt_cfg.lwt_payload = "0";
-    mqtt_cfg.lwt_retain  = true;
+    MqttConfig mqtt_settings;
+    mqtt_settings.host        = broker_host;
+    mqtt_settings.port        = broker_port;
+    mqtt_settings.client_id   = "mppt_" + gateway + "_" + SERIAL;
+    mqtt_settings.lwt_topic   = BASE_TOPIC + "/online";
+    mqtt_settings.lwt_payload = "0";
+    mqtt_settings.lwt_retain  = true;
 
     std::cerr << "\n[mqtt] broker   = " << broker_host << ":" << broker_port << "\n";
     std::cerr << "[mqtt] zone     = " << zone << "\n";
@@ -165,16 +170,32 @@ auto main(int argc, char *argv[]) -> int {
     std::cerr << "[mqtt] base     = " << BASE_TOPIC << "\n";
     std::cerr << "[mqtt] lwt      = " << BASE_TOPIC << "/online -> \"0\"\n";
 
-    MqttClient client(mqtt_cfg);
+    MqttClient client(mqtt_settings);
     bool       connected = client.connect();
 
     if (connected) {
         // Mark device online (retained, broker auto-publishes to new subscribers)
         client.publish(BASE_TOPIC + "/online", "1", /*retain=*/true);
 
-        //  1: Telemetry (always, QoS 0)
+        //  1: Static identity — published once, retained
+        if (have_eeprom) {
+            const std::string INFO_PAYLOAD = build_info_json(settings).dump();
+            std::cerr << "[mqtt] info       " << INFO_PAYLOAD.size() << " bytes -> " << BASE_TOPIC
+                      << "/info\n";
+            client.publish(BASE_TOPIC + "/info", INFO_PAYLOAD, /*retain=*/true, /*qos=*/1);
+        }
+
+        //  2: Current settings — published once, retained
+        if (have_eeprom) {
+            const std::string SET_PAYLOAD = build_settings_json(settings.settings, ts).dump();
+            std::cerr << "[mqtt] settings   " << SET_PAYLOAD.size() << " bytes -> " << BASE_TOPIC
+                      << "/settings\n";
+            client.publish(BASE_TOPIC + "/settings", SET_PAYLOAD, /*retain=*/true, /*qos=*/1);
+        }
+
+        //  3: Telemetry (always, QoS 0)
         if (have_tele) {
-            const nlohmann::json TELE_JSON    = build_telemetry_json(tele, cfg, ts);
+            const nlohmann::json TELE_JSON    = build_telemetry_json(tele, settings, ts);
             const std::string    TELE_PAYLOAD = TELE_JSON.dump();
 
             std::cerr << "[mqtt] telemetry  " << TELE_PAYLOAD.size() << " bytes -> " << BASE_TOPIC
@@ -190,10 +211,10 @@ auto main(int argc, char *argv[]) -> int {
             }
         }
 
-        // 2: Datalogger (only when EEPROM available, QoS 1 + retained)
+        // 4: Datalogger (only when EEPROM available, QoS 1 + retained)
         if (have_eeprom) {
             const nlohmann::json DL_JSON =
-                build_datalogger_json(cfg, summary, daily_logs, monthly_logs, ts);
+                build_datalogger_json(settings, summary, daily_logs, monthly_logs, ts);
             const std::string DL_PAYLOAD = DL_JSON.dump();
 
             std::cerr << "[mqtt] datalogger " << DL_PAYLOAD.size() << " bytes -> " << BASE_TOPIC

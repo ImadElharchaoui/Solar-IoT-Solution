@@ -9,19 +9,23 @@ static inline auto v16(uint16_t mv) -> double {
     return mv_to_v(static_cast<uint32_t>(mv));
 }
 
-auto build_telemetry_json(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts)
-    -> nlohmann::json {
-    const std::string &serial    = !cfg.serial_number.empty() ? cfg.serial_number : "Unknown";
-    const std::string &prod_date = !cfg.production_date.empty() ? cfg.production_date : "";
-    const std::string &dev_type  = !cfg.device_id.empty() ? cfg.device_id : "Unknown";
+auto build_info_json(const EepromSettings &settings) -> nlohmann::json {
+    return {
+        {"serial_number",   !settings.serial_number.empty()   ? settings.serial_number   : "Unknown"},
+        {"production_date", !settings.production_date.empty() ? settings.production_date : ""},
+        {"type",            !settings.device_id.empty()       ? settings.device_id       : "Unknown"},
+        {"hw_version",      settings.hw_version},
+    };
+}
 
+auto build_telemetry_json(const PhocosTelemetry &t,
+                           const EepromSettings  &settings,
+                           std::time_t            ts) -> nlohmann::json {
     nlohmann::json j;
 
     j["general"] = {
-        {"timestamp", std::string(ts)},
-        {"type", dev_type},
-        {"production_date", prod_date},
-        {"serial_number", serial},
+        {"timestamp", static_cast<long long>(ts)},
+        {"serial_number", settings.serial_number},
         {"firmware_version", t.firmware_version},
         {"internal_temp_c", t.internal_temp_c},
         {"external_temp_c", t.external_temp_c},
@@ -30,7 +34,6 @@ auto build_telemetry_json(const PhocosTelemetry &t, const EepromSettings &cfg, s
     };
 
     j["battery"] = {
-        {"type", cfg.battery_type},
         {"voltage_v", mv_to_v(t.battery_voltage_mv)},
         {"soc_pct", t.battery_soc_pct},
         {"charge_current_a", ma_to_a(t.charge_current_ma)},
@@ -129,29 +132,29 @@ static auto log_entries_to_json(const LogEntry *entries, std::size_t count, cons
     return arr;
 }
 
-auto build_datalogger_json(const EepromSettings      &cfg,
+auto build_datalogger_json(const EepromSettings      &settings,
                            const DataloggerSummary &s,
                            const DailyLogBuffer    &days,
                            const MonthlyLogBuffer  &months,
-                           std::string_view         ts) -> nlohmann::json {
-    const std::string &serial = !cfg.serial_number.empty() ? cfg.serial_number : "Unknown";
+                           std::time_t              ts) -> nlohmann::json {
+    const std::string &serial = !settings.serial_number.empty() ? settings.serial_number : "Unknown";
 
     return {
-        {"timestamp", std::string(ts)},
+        {"timestamp", static_cast<long long>(ts)},
         {"serial_number", serial},
         {"eeprom",
          {
-             {"battery_type", cfg.battery_type},
-             {"capacity_ah", cfg.settings.capacity_ah},
-             {"lvd_voltage_v", v16(cfg.settings.lvd_voltage_mv)},
-             {"boost_voltage_v", v16(cfg.boost_mv)},
-             {"float_voltage_v", v16(cfg.float_mv)},
-             {"equalization_voltage_v", v16(cfg.equalization_mv)},
-             {"night_mode", cfg.night_mode},
-             {"dimming_pct", cfg.settings.dimming_pct},
-             {"base_dimming_pct", cfg.settings.base_dimming_pct},
-             {"dali_active", cfg.settings.dali_power_enable},
-             {"alc_dimming", cfg.settings.alc_dimming_enable},
+             {"battery_type", settings.battery_type},
+             {"capacity_ah", settings.settings.capacity_ah},
+             {"lvd_voltage_v", v16(settings.settings.lvd_voltage_mv)},
+             {"boost_voltage_v", v16(settings.boost_mv)},
+             {"float_voltage_v", v16(settings.float_mv)},
+             {"equalization_voltage_v", v16(settings.equalization_mv)},
+             {"night_mode", settings.night_mode},
+             {"dimming_pct", settings.settings.dimming_pct},
+             {"base_dimming_pct", settings.settings.base_dimming_pct},
+             {"dali_active", settings.settings.dali_power_enable},
+             {"alc_dimming", settings.settings.alc_dimming_enable},
          }},
         {"datalogger",
          {
@@ -160,6 +163,7 @@ auto build_datalogger_json(const EepromSettings      &cfg,
              {"months_without_full_charge", s.months_without_full_charge},
              {"avg_morning_soc_pct", round1(static_cast<double>(s.avg_morning_soc_pct))},
              {"total_ah_charge", round1(static_cast<double>(s.total_ah_charge))},
+             {"total_ah_charge_ah", round1(static_cast<double>(s.total_ah_charge))}, // legacy compatibility
              {"total_ah_load", round1(static_cast<double>(s.total_ah_load))},
              {"daily", log_entries_to_json(days.entries.data(), days.count, "day")},
              {"monthly", log_entries_to_json(months.entries.data(), months.count, "month")},
@@ -167,9 +171,9 @@ auto build_datalogger_json(const EepromSettings      &cfg,
     };
 }
 
-auto build_settings_json(const DeviceSettings &s, std::string_view ts) -> nlohmann::json {
+auto build_settings_json(const DeviceSettings &s, std::time_t ts) -> nlohmann::json {
     return {
-        {"timestamp", std::string(ts)},
+        {"timestamp", static_cast<long long>(ts)},
         {"battery_type_index", s.battery_type_index},
         {"capacity_ah", s.capacity_ah},
         {"lvd_voltage_mv", s.lvd_voltage_mv},

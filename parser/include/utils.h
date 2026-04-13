@@ -105,15 +105,9 @@ inline auto get_u32(const std::vector<uint8_t> &data, int b0) -> uint32_t {
            static_cast<uint32_t>(byte_at(data, b0 + 3));
 }
 
-inline auto current_timestamp() -> std::string {
+inline auto current_timestamp() -> std::time_t {
     const std::time_t NOW = std::time(nullptr);
-    std::string       buf(20, '\0');
-    const std::size_t LEN =
-        std::strftime(buf.data(), buf.size(), "%Y-%m-%d %H:%M:%S", std::localtime(&NOW));
-    if (LEN > 0) {
-        buf.resize(LEN);
-    }
-    return buf;
+    return NOW;
 }
 
 // Returns the system hostname (used as the MQTT gateway identifier).

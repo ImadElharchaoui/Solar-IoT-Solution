@@ -11,24 +11,32 @@ static inline auto yn(bool b) -> const char * {
     return b ? "Yes" : "No";
 }
 
-static inline auto row = [](const char* label, const auto& value, const char* unit = "") {
-    std::cout << "  "
-              << std::left << std::setw(36) << label
-              << " " << value << unit << "\n";
-};
-
-void print_system_state(const PhocosTelemetry &t, const EepromSettings &cfg, std::string_view ts) {
-    const std::string &dev_type  = !cfg.device_id.empty() ? cfg.device_id : "Unknown";
-    const std::string &serial    = !cfg.serial_number.empty() ? cfg.serial_number : "N/A";
-    const std::string &prod_date = !cfg.production_date.empty() ? cfg.production_date : "N/A";
-    const std::string &bat_type  = !cfg.battery_type.empty() ? cfg.battery_type : "Unknown";
+void print_system_state(const PhocosTelemetry &t,
+                        const EepromSettings  &settings,
+                        std::time_t            ts) {
+    const std::string &dev_type = !settings.device_id.empty() ? settings.device_id : "Unknown";
+    const std::string &serial   = !settings.serial_number.empty() ? settings.serial_number : "N/A";
+    const std::string &prod_date =
+        !settings.production_date.empty() ? settings.production_date : "N/A";
+    const std::string &bat_type =
+        !settings.battery_type.empty() ? settings.battery_type : "Unknown";
 
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║           System State                   ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
+    auto row = [](const char *label, const auto &value, const char *unit = "") {
+        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
+    };
+
     std::cout << "\n[General]\n";
-    row("Timestamp", ts);
+
+    char ts_buf[64];
+    if (std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%d %H:%M:%S", std::localtime(&ts)) != 0U) {
+        row("Timestamp", ts_buf);
+    } else {
+        row("Timestamp", ts);
+    }
     row("Type", dev_type);
     row("Hardware Version", "V" + std::to_string(t.hw_version));
     row("Production Date", prod_date);
@@ -140,48 +148,53 @@ void print_system_state(const PhocosTelemetry &t, const EepromSettings &cfg, std
     }
 }
 
-void print_eeprom_settings(const EepromSettings &cfg) {
+void print_eeprom_config(const EepromSettings &settings) {
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║           Device Settings                ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
+    auto row = [](const char *label, const auto &value, const char *unit = "") {
+        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
+    };
 
     std::cout << "\n[Identity]\n";
-    row("Device ID", cfg.device_id);
-    row("Serial Number", cfg.serial_number);
-    row("Production Date", cfg.production_date);
+    row("Device ID", settings.device_id);
+    row("Serial Number", settings.serial_number);
+    row("Production Date", settings.production_date);
 
-    std::cout << "\n[Battery Settings]\n";
-    row("Type", cfg.battery_type);
-    row("Capacity", std::to_string(cfg.settings.capacity_ah) + " Ah");
-    row("Battery Op. Time", std::to_string(cfg.battery_op_days) + " Days");
+    std::cout << "\n[Battery]\n";
+    row("Type", settings.battery_type);
+    row("Capacity", std::to_string(settings.settings.capacity_ah) + " Ah");
+    row("Battery Op. Time", std::to_string(settings.battery_op_days) + " Days");
     std::cout << std::fixed << std::setprecision(3);
-    row("LVD Voltage", mv_to_v(cfg.settings.lvd_voltage_mv), " V");
-    row("LVD Mode", cfg.settings.lvd_mode_voltage ? "Voltage" : "Current");
-    row("Equalization Voltage", mv_to_v(cfg.equalization_mv), " V");
-    row("Boost Voltage", mv_to_v(cfg.boost_mv), " V");
-    row("Float Voltage", mv_to_v(cfg.float_mv), " V");
+    row("LVD Voltage", mv_to_v(settings.settings.lvd_voltage_mv), " V");
+    row("LVD Mode", settings.settings.lvd_mode_voltage ? "Voltage" : "Current");
+    row("Equalization Voltage", mv_to_v(settings.equalization_mv), " V");
+    row("Boost Voltage", mv_to_v(settings.boost_mv), " V");
+    row("Float Voltage", mv_to_v(settings.float_mv), " V");
     std::cout << std::fixed << std::setprecision(1);
-    row("Temp Compensation", static_cast<float>(cfg.temp_comp_mv_per_c), " mV/°C");
+    row("Temp Compensation", static_cast<float>(settings.temp_comp_mv_per_c), " mV/°C");
 
     std::cout << "\n[Night Mode]\n";
     std::cout << std::fixed << std::setprecision(3);
-    row("Night Threshold", mv_to_v(cfg.settings.night_threshold_mv), " V");
-    row("Mode", cfg.night_mode);
-    row("Evening Duration", std::to_string(cfg.settings.evening_minutes_mn) + " min");
-    row("Morning Duration", std::to_string(cfg.settings.morning_minutes_mn) + " min");
+    row("Night Threshold", mv_to_v(settings.settings.night_threshold_mv), " V");
+    row("Mode", settings.night_mode);
+    row("Evening Duration", std::to_string(settings.settings.evening_minutes_mn) + " min");
+    row("Morning Duration", std::to_string(settings.settings.morning_minutes_mn) + " min");
 
     std::cout << "\n[Dimming]\n";
-    row("Dimming Mode", cfg.night_mode_dimming);
-    row("Evening Dim Duration", std::to_string(cfg.settings.evening_minutes_dimming_mn) + " min");
-    row("Morning Dim Duration", std::to_string(cfg.settings.morning_minutes_dimming_mn) + " min");
-    row("Dimming Level", std::to_string(cfg.settings.dimming_pct) + " %");
-    row("Base Dimming Level", std::to_string(cfg.settings.base_dimming_pct) + " %");
+    row("Dimming Mode", settings.night_mode_dimming);
+    row("Evening Dim Duration",
+        std::to_string(settings.settings.evening_minutes_dimming_mn) + " min");
+    row("Morning Dim Duration",
+        std::to_string(settings.settings.morning_minutes_dimming_mn) + " min");
+    row("Dimming Level", std::to_string(settings.settings.dimming_pct) + " %");
+    row("Base Dimming Level", std::to_string(settings.settings.base_dimming_pct) + " %");
 
     std::cout << "\n[Features]\n";
-    row("DALI Active", yn(cfg.settings.dali_power_enable));
-    row("ALC Dimming", yn(cfg.settings.alc_dimming_enable));
-    row("Operation Time", std::to_string(cfg.operation_days) + " Days");
+    row("DALI Active", yn(settings.settings.dali_power_enable));
+    row("ALC Dimming", yn(settings.settings.alc_dimming_enable));
+    row("Operation Time", std::to_string(settings.operation_days) + " Days");
 }
 
 static auto format_state_flags(const StateFlags &f) -> std::string {
@@ -257,6 +270,10 @@ void print_data_logger(const DataloggerSummary &s,
               << "║           Data Logger                    ║\n"
               << "╚══════════════════════════════════════════╝\n";
 
+    auto row = [](const char *label, const auto &value, const char *unit = "") {
+        std::cout << "  " << std::left << std::setw(36) << label << " " << value << unit << "\n";
+    };
+
     std::cout << "\n[General]\n";
     row("Recorded Days", s.num_days);
 
@@ -272,4 +289,25 @@ void print_data_logger(const DataloggerSummary &s,
 
     print_log_entries(days.entries.data(), days.count, "Daily Data", "Day");
     print_log_entries(months.entries.data(), months.count, "Monthly Data", "Month");
+}
+
+// ---------------------------------------------------------------------------
+// JSON-per-topic printers (stdout, mirrors what gets published to MQTT)
+// ---------------------------------------------------------------------------
+
+#include "json_builder.h"
+
+void print_info_json(const EepromSettings &settings) {
+    std::cout << "\n[JSON /info]\n"
+              << build_info_json(settings).dump(2) << "\n";
+}
+
+void print_state_json(const PhocosTelemetry &t, const EepromSettings &settings, std::time_t ts) {
+    std::cout << "\n[JSON /state]\n"
+              << build_telemetry_json(t, settings, ts).dump(2) << "\n";
+}
+
+void print_settings_json(const DeviceSettings &s, std::time_t ts) {
+    std::cout << "\n[JSON /settings]\n"
+              << build_settings_json(s, ts).dump(2) << "\n";
 }
