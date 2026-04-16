@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
-import json
 import math
 import os
 import random
+import sys
 import threading
 import time
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
+
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+try:
+    from proto import mppt_pb2
+except ImportError:
+    sys.exit(
+        f"Cannot import proto.mppt_pb2.\n"
+        f"Run `make proto` (or `make`) inside parser/ to generate it, then retry.\n"
+        f"Expected location: {os.path.join(_REPO_ROOT, 'proto', 'mppt_pb2.py')}"
+    )
 
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
@@ -25,12 +39,15 @@ TOPIC_ACK = "mppt/default/{gw}/{serial}/ack"
 TOTAL_DAYS = 30
 TOTAL_MONTHS = 12
 
+_BAT_TYPES = ["AGM", "Liquid", "LiFePO4 High", "LiFePO4 Med", "LiFePO4 Low"]
+_NIGHT_MODES = ["Off", "D2D", "DD", "MN"]
 
-def rnd(lo, hi, dec=2):
+
+def _rnd(lo: float, hi: float, dec: int = 2) -> float:
     return round(lo + random.random() * (hi - lo), dec)
 
 
-def rnd_int(lo, hi):
+def _rnd_int(lo: int, hi: int) -> int:
     return random.randint(lo, hi)
 
 
@@ -42,7 +59,7 @@ MODE_SCHEDULE = [
 
 
 class SimDevice:
-    def __init__(self, serial, hw, gateway, start_mode):
+    def __init__(self, serial: str, hw: int, gateway: str, start_mode: str):
         self.serial = serial
         self.hw = hw
         self.gateway = gateway
@@ -53,16 +70,16 @@ class SimDevice:
         self._mode_timer = 0.0
         self.charge_mode = start_mode
 
-        self.soc = rnd(40.0, 90.0, 1)
-        self.vbat = rnd(12.8, 13.8, 3)
-        self.vpv = rnd(15.0, 20.0, 3)
-        self.vpv_target = rnd(14.5, 16.5, 3)
-        self.ichg = rnd(1.0, 5.0, 2)
-        self.iload = rnd(0.5, 3.0, 2)
-        self.temp_int = rnd(22.0, 35.0, 1)
-        self.temp_ext = rnd(18.0, 32.0, 1)
-        self.led_v = rnd(11.5, 13.5, 3) if hw == 3 else 0.0
-        self.led_i = rnd(0.01, 0.15, 2) if hw == 3 else 0.0
+        self.soc = _rnd(40.0, 90.0, 1)
+        self.vbat = _rnd(12.8, 13.8, 3)
+        self.vpv = _rnd(15.0, 20.0, 3)
+        self.vpv_target = _rnd(14.5, 16.5, 3)
+        self.ichg = _rnd(1.0, 5.0, 2)
+        self.iload = _rnd(0.5, 3.0, 2)
+        self.temp_int = _rnd(22.0, 35.0, 1)
+        self.temp_ext = _rnd(18.0, 32.0, 1)
+        self.led_v = _rnd(11.5, 13.5, 3) if hw == 3 else 0.0
+        self.led_i = _rnd(0.01, 0.15, 2) if hw == 3 else 0.0
 
         self.faults = {
             "battery_over_voltage": False,
@@ -77,21 +94,19 @@ class SimDevice:
 
         self._last_t = time.time()
         self._startup_time = time.time()
-        self._publish_count = 0
         self._new_day_sent = False
-        self._settings_override = None  # overwritten by apply_settings
+        self._settings_override: mppt_pb2.DeviceSettings | None = None
 
-        # Pre-generate the full history burst, sent in the FIRST message
         self._burst_daily = [self._daily_row(d) for d in range(1, TOTAL_DAYS + 1)]
         self._burst_monthly = [self._monthly_row(m) for m in range(1, TOTAL_MONTHS + 1)]
         self._burst_sent = False
 
     @staticmethod
-    def _jitter(v, pct=0.02):
+    def _jitter(v: float, pct: float = 0.02) -> float:
         return v * (1.0 + random.uniform(-pct, pct))
 
     @staticmethod
-    def _sine(t, period, lo, hi):
+    def _sine(t: float, period: float, lo: float, hi: float) -> float:
         return lo + (hi - lo) * (0.5 + 0.5 * math.sin(2 * math.pi * t / period))
 
     def step(self):
@@ -148,366 +163,387 @@ class SimDevice:
         self.faults["battery_over_temp"] = self.temp_int > 50.0
         self.faults["battery_under_temp"] = self.temp_ext < 12.0
 
-    def _daily_row(self, day):
-        base_vbat = rnd(12.0, 14.2, 3)
-        base_vpv = rnd(8.0, 20.0, 3)
+    def _daily_row(self, day: int) -> dict:
+        base_vbat = _rnd(12.0, 14.2, 3)
+        base_vpv = _rnd(8.0, 20.0, 3)
         return {
-            "day": day,
-            "vbat_min_v": round(base_vbat - rnd(0.5, 1.5, 3), 3),
-            "vbat_max_v": round(base_vbat + rnd(0.2, 0.8, 3), 3),
-            "vpv_min_v": round(max(0.0, base_vpv - rnd(5.0, 10.0, 3)), 3),
+            "index": day,
+            "vbat_min_v": round(base_vbat - _rnd(0.5, 1.5, 3), 3),
+            "vbat_max_v": round(base_vbat + _rnd(0.2, 0.8, 3), 3),
+            "vpv_min_v": round(max(0.0, base_vpv - _rnd(5.0, 10.0, 3)), 3),
             "vpv_max_v": base_vpv,
-            "ah_charge": rnd(10.0, 70.0, 1),
-            "ah_load": rnd(8.0, 60.0, 1),
-            "il_max_a": rnd(0.5, 12.0, 2),
-            "ipv_max_a": rnd(1.0, 10.0, 2),
-            "soc_pct": float(rnd_int(5, 100)),
-            "ext_temp_max_c": float(rnd_int(18, 45)),
-            "ext_temp_min_c": float(rnd_int(5, 20)),
-            "nightlength_min": float(rnd_int(540, 800)),
-            "state": rnd_int(0, 3),
-            "flags": {
-                "ld": False,
-                "fcb": day % 3 == 0,
-                "pvoc": False,
-                "loc": False,
-                "bov": False,
-                "lsoc": random.random() > 0.8,
-                "topvo": False,
-                "topvl": False,
-                "tolo": False,
-            },
+            "ah_charge": _rnd(10.0, 70.0, 1),
+            "ah_load": _rnd(8.0, 60.0, 1),
+            "il_max_a": _rnd(0.5, 12.0, 2),
+            "ipv_max_a": _rnd(1.0, 10.0, 2),
+            "soc_pct": float(_rnd_int(5, 100)),
+            "ext_temp_max_c": _rnd_int(18, 45),
+            "ext_temp_min_c": _rnd_int(5, 20),
+            "nightlength_min": _rnd_int(540, 800),
+            "flag_full_charge": day % 3 == 0,
+            "flag_low_soc": random.random() > 0.8,
         }
 
-    def _monthly_row(self, month):
-        # Simulate seasonal variation: months 5-9 (summer) have more charge
+    def _monthly_row(self, month: int) -> dict:
         season = 0.5 + 0.5 * math.sin(math.pi * (month - 1) / 11)
         return {
-            "month": month,
-            "vbat_min_v": rnd(11.2, 12.5, 3),
-            "vbat_max_v": rnd(13.5, 14.2, 3),
-            "vpv_min_v": rnd(3.0, 7.0, 3),
-            "vpv_max_v": rnd(17.0, 22.0, 3),
-            "ah_charge": round(200.0 + season * 700.0 + rnd(-50, 50, 1), 1),
-            "ah_load": round(150.0 + season * 500.0 + rnd(-30, 30, 1), 1),
-            "il_max_a": rnd(1.0, 4.0, 2),
-            "ipv_max_a": rnd(2.0, 8.0, 2),
-            "soc_pct": float(rnd_int(20, 90)),
-            "ext_temp_max_c": float(rnd_int(20, 50)),
-            "ext_temp_min_c": float(rnd_int(0, 20)),
-            "nightlength_min": float(rnd_int(540, 720)),
+            "index": month,
+            "vbat_min_v": _rnd(11.2, 12.5, 3),
+            "vbat_max_v": _rnd(13.5, 14.2, 3),
+            "vpv_min_v": _rnd(3.0, 7.0, 3),
+            "vpv_max_v": _rnd(17.0, 22.0, 3),
+            "ah_charge": round(200.0 + season * 700.0 + _rnd(-50, 50, 1), 1),
+            "ah_load": round(150.0 + season * 500.0 + _rnd(-30, 30, 1), 1),
+            "il_max_a": _rnd(1.0, 4.0, 2),
+            "ipv_max_a": _rnd(2.0, 8.0, 2),
+            "soc_pct": float(_rnd_int(20, 90)),
+            "ext_temp_max_c": _rnd_int(20, 50),
+            "ext_temp_min_c": _rnd_int(0, 20),
+            "nightlength_min": _rnd_int(540, 720),
         }
 
-    def apply_settings(self, settings: dict):
-        """Apply SET_SETTINGS command and print a human-readable summary."""
-        BAT_TYPES = ["AGM", "Liquid", "LiFePO4 High", "LiFePO4 Med", "LiFePO4 Low"]
-        NIGHT_MODES = ["Off", "D2D", "DD", "MN"]
+    def apply_settings(self, ps: mppt_pb2.DeviceSettings, client: mqtt.Client):
+        """Apply partial DeviceSettings safely using HasField() for optional fields."""
+        print(f"  [{self.serial}] Received partial settings update:")
 
-        bat_idx = settings.get("battery_type_index", 1)
-        night_idx = settings.get("night_mode_index", 1)
-        cap = settings.get("capacity_ah", 128)
-        lvd_mv = settings.get("lvd_voltage_mv", 11000)
-        dimming = settings.get("dimming_pct", 100)
-        base_dim = settings.get("base_dimming_pct", 30)
-        eve_min = settings.get("evening_minutes_mn", 0)
-        morn_min = settings.get("morning_minutes_mn", 0)
-        dali = settings.get("dali_power_enable", False)
-        alc = settings.get("alc_dimming_enable", False)
+        if self._settings_override is None:
+            self._settings_override = mppt_pb2.DeviceSettings()
+            # Load current defaults
+            tmp = mppt_pb2.DeviceSettings()
+            tmp.ParseFromString(self.get_settings_proto())
+            self._settings_override.CopyFrom(tmp)
 
-        bat_label = (
-            BAT_TYPES[bat_idx] if 0 <= bat_idx < len(BAT_TYPES) else str(bat_idx)
-        )
-        night_label = (
-            NIGHT_MODES[night_idx]
-            if 0 <= night_idx < len(NIGHT_MODES)
-            else str(night_idx)
-        )
+        updated = []
 
-        print(f"  [{self.serial}]  Configuring battery type   -> {bat_label}")
-        print(f"  [{self.serial}]  Configuring capacity       -> {cap} Ah")
-        print(f"  [{self.serial}]  Configuring LVD voltage    -> {lvd_mv / 1000:.2f} V")
-        print(f"  [{self.serial}]  Configuring night mode     -> {night_label}")
-        print(f"  [{self.serial}]  Configuring evening run    -> {eve_min} min")
-        print(f"  [{self.serial}]  Configuring morning run    -> {morn_min} min")
-        print(
-            f"  [{self.serial}]  Configuring dimming        -> {dimming}%  (base {base_dim}%)"
-        )
-        print(
-            f"  [{self.serial}]  Configuring DALI power     -> {'enabled' if dali else 'disabled'}"
-        )
-        print(
-            f"  [{self.serial}]  Configuring ALC dimming    -> {'enabled' if alc else 'disabled'}"
-        )
-
-        print(
-            f"  [{self.serial}]  Configuring evening run    -> {settings.get('evening_minutes_mn', 0)} min"
-        )
-        print(
-            f"  [{self.serial}]  Configuring morning run    -> {settings.get('morning_minutes_mn', 0)} min"
-        )
-        print(
-            f"  [{self.serial}]  Configuring dim eve        -> {settings.get('evening_minutes_dimming_mn', 0)} min"
-        )
-        print(
-            f"  [{self.serial}]  Configuring dim morn       -> {settings.get('morning_minutes_dimming_mn', 0)} min"
-        )
-
-        # Persist new settings so next publish reflects them
-        self._settings_override = settings
-
-    def get_info(self):
-        """Static device identity - published once with retain=True."""
-        return {
-            "serial_number": self.serial,
-            "type": f"Solar Smart Controller V{self.hw}",
-            "hw_version": self.hw,
-            "production_date": "2025-06-13",
-        }
-
-    def get_settings(self):
-        """Device settings snapshot - published retained on boot/change."""
-        base = {
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "battery_type_index": 1,  # LiFePO4 Medium Temp
-            "capacity_ah": 128,
-            "lvd_voltage_mv": 11000,
-            "lvd_mode_voltage": False,
-            "night_mode_index": 1,  # D2D
-            "evening_minutes_mn": 120,
-            "morning_minutes_mn": 60,
-            "night_threshold_mv": 11500,
-            "night_mode_dimming_index": 0,
-            "evening_minutes_dimming": 0,
-            "morning_minutes_dimming": 0,
-            "dimming_pct": 100,
-            "base_dimming_pct": 30,
-            "dali_power_enable": False,
-            "alc_dimming_enable": False,
-        }
-        if self._settings_override:
-            base.update(self._settings_override)
-            base["timestamp"] = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        return base
-
-    def get_payloads(self):
-        chargeA = round(self.ichg, 2)
-        loadA = round(self.iload, 2)
-        v = round(self.vbat, 3)
-        ledV = round(self.led_v, 3) if self.hw == 3 else 0
-        ledA = round(self.led_i, 2) if self.hw == 3 else 0
-        soc = round(self.soc, 1)
-
-        self._publish_count += 1
-        now = time.time()
-
-        should_publish_datalog = False
-        # First publish: send ALL history at once
-        if not self._burst_sent:
-            daily = list(self._burst_daily)  # all 30 days
-            monthly = list(self._burst_monthly)  # all 12 months
-            self._burst_sent = True
-            should_publish_datalog = True
-            print(
-                f"  [{self.serial}] * Initial burst: {len(daily)} days + {len(monthly)} months"
+        # === Safe partial update using HasField() for optional proto3 fields ===
+        if ps.HasField("battery_type_index"):
+            self._settings_override.battery_type_index = ps.battery_type_index
+            bat = (
+                _BAT_TYPES[ps.battery_type_index]
+                if ps.battery_type_index < len(_BAT_TYPES)
+                else str(ps.battery_type_index)
             )
+            print(f"    battery type    -> {bat}")
+            updated.append("battery")
 
-        # Subsequent: no datalogger data unless it's a new-day injection
-        elif not self._new_day_sent and (now - self._startup_time) > NEW_DAY_DELAY_S:
-            daily = [self._daily_row(30)]
-            monthly = []
-            self._new_day_sent = True
-            should_publish_datalog = True
-            print(f"  [{self.serial}] * New day-30 re-injected")
+        if ps.HasField("capacity_ah"):
+            self._settings_override.capacity_ah = ps.capacity_ah
+            print(f"    capacity        -> {ps.capacity_ah} Ah")
+            updated.append("capacity")
 
-        else:
-            daily = []
-            monthly = []
+        if ps.HasField("lvd_voltage_mv"):
+            self._settings_override.lvd_voltage_mv = ps.lvd_voltage_mv
+            print(f"    LVD voltage     -> {ps.lvd_voltage_mv / 1000:.2f} V")
+            updated.append("lvd")
 
-        datalog_out = {
-            "recorded_days": TOTAL_DAYS,
-            "days_with_lvd": rnd_int(0, 5),
-            "months_without_full_charge": rnd_int(0, 2),
-            "avg_morning_soc_pct": rnd(20.0, 80.0, 1),
-            "total_ah_charge": rnd(800.0, 8000.0, 1),
-            "total_ah_load": rnd(700.0, 7000.0, 1),
-            "daily": daily,
-            "monthly": monthly,
-        }
+        if ps.HasField("lvd_mode_voltage"):
+            self._settings_override.lvd_mode_voltage = ps.lvd_mode_voltage
+            print(
+                f"    LVD mode        -> {'voltage' if ps.lvd_mode_voltage else 'SOC'}"
+            )
+            updated.append("lvd_mode")
 
-        telemetry = {
-            "general": {
-                "hw_version": self.hw,
-                "firmware_version": 17,
-                "internal_temp_c": round(self.temp_int, 1),
-                "external_temp_c": round(self.temp_ext, 1),
-                "controller_op_days": rnd_int(300, 400),
-                "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            },
-            "battery": {
-                "voltage_v": v,
-                "soc_pct": soc,
-                "charge_current_a": chargeA,
-                "charge_power_w": round(chargeA * v),
-                "end_of_charge_voltage_v": round(self.vpv_target, 3),
-                "charge_mode": self.charge_mode,
-                "is_night": False,
-                "operation_days": rnd_int(300, 400),
-                "energy_in_daily_wh": rnd_int(0, 600),
-                "energy_out_daily_wh": rnd_int(200, 500),
-                "energy_retained_wh": rnd_int(100, 300),
-                "detected": True,
-            },
-            "load": {
-                "load_on": True,
-                "night_mode": False,
-                "lvd_active": soc < 10.0,
-                "user_disconnect": False,
-                "over_current": False,
-                "current_a": loadA,
-                "power_w": round(loadA * v),
-            },
-            "pv": {
-                "voltage_v": round(self.vpv, 3),
-                "target_voltage_v": round(self.vpv_target, 3),
-                "detected": True,
-            },
-            "night": {
-                "time_since_dusk_min": 0,
-                "average_length_min": rnd_int(580, 680),
-            },
-            "led": {
-                "voltage_v": ledV,
-                "current_a": ledA,
-                "power_w": round(ledV * ledA, 1) if ledV and ledA else 0,
-                "status": "Normal",
-                "dali_active": False,
-            },
-            "faults": dict(self.faults),
-        }
+        if ps.HasField("night_mode_index"):
+            self._settings_override.night_mode_index = ps.night_mode_index
+            night = (
+                _NIGHT_MODES[ps.night_mode_index]
+                if ps.night_mode_index < len(_NIGHT_MODES)
+                else str(ps.night_mode_index)
+            )
+            print(f"    night mode      -> {night}")
+            updated.append("night_mode")
 
-        datalogger = {
-            "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "serial_number": self.serial,
-            "eeprom": {
-                "battery_type": "LiFePO4 - Medium Temp",
-                "capacity_ah": 128,
-            },
-            "datalogger": datalog_out,
-        }
+        if ps.HasField("evening_minutes_mn"):
+            self._settings_override.evening_minutes_mn = ps.evening_minutes_mn
+            print(f"    evening run     -> {ps.evening_minutes_mn} min")
+            updated.append("evening")
 
-        return (
-            telemetry,
-            datalogger if should_publish_datalog else None,
-            should_publish_datalog,
+        if ps.HasField("morning_minutes_mn"):
+            self._settings_override.morning_minutes_mn = ps.morning_minutes_mn
+            print(f"    morning run     -> {ps.morning_minutes_mn} min")
+            updated.append("morning")
+
+        if ps.HasField("night_threshold_mv"):
+            self._settings_override.night_threshold_mv = ps.night_threshold_mv
+            print(f"    night threshold -> {ps.night_threshold_mv / 1000:.2f} V")
+            updated.append("night_thresh")
+
+        if ps.HasField("dimming_pct"):
+            self._settings_override.dimming_pct = ps.dimming_pct
+            print(f"    dimming         -> {ps.dimming_pct}%")
+            updated.append("dimming")
+
+        if ps.HasField("base_dimming_pct"):
+            self._settings_override.base_dimming_pct = ps.base_dimming_pct
+            print(f"    base dimming    -> {ps.base_dimming_pct}%")
+            updated.append("base_dim")
+
+        if ps.HasField("dali_power_enable"):
+            self._settings_override.dali_power_enable = ps.dali_power_enable
+            print(f"    DALI power      -> {'on' if ps.dali_power_enable else 'off'}")
+            updated.append("dali")
+
+        if ps.HasField("alc_dimming_enable"):
+            self._settings_override.alc_dimming_enable = ps.alc_dimming_enable
+            print(f"    ALC dimming     -> {'on' if ps.alc_dimming_enable else 'off'}")
+            updated.append("alc")
+
+        if not updated:
+            print("    (no fields changed)")
+
+        # Re-publish full updated settings
+        client.publish(
+            TOPIC_SETTINGS.format(gw=self.gateway, serial=self.serial),
+            self.get_settings_proto(),
+            qos=1,
+            retain=True,
         )
 
+    def get_info_proto(self) -> bytes:
+        msg = mppt_pb2.DeviceInfo()
+        msg.serial_number = self.serial
+        msg.production_date = "2024-03-15"
+        msg.device_type = "Phocos CIS-N"
+        msg.hw_version = self.hw
+        return msg.SerializeToString()
 
-# MQTT
+    def get_settings_proto(self) -> bytes:
+        msg = mppt_pb2.DeviceSettings()
+        # Default values
+        msg.serial = self.serial
+        msg.timestamp.FromDatetime(datetime.now(timezone.utc))
+        msg.battery_type_index = 1  # LiFePO4 Med
+        msg.capacity_ah = 128
+        msg.lvd_voltage_mv = 11000
+        msg.lvd_mode_voltage = False
+        msg.night_mode_index = 1  # D2D
+        msg.evening_minutes_mn = 120
+        msg.morning_minutes_mn = 60
+        msg.night_threshold_mv = 11500
+        msg.night_mode_dimming_index = 0
+        msg.evening_minutes_dimming_mn = 0
+        msg.morning_minutes_dimming_mn = 0
+        msg.dimming_pct = 100
+        msg.base_dimming_pct = 30
+        msg.dali_power_enable = False
+        msg.alc_dimming_enable = False
+        if self._settings_override is not None:
+            msg.CopyFrom(self._settings_override)
+            msg.timestamp.FromDatetime(datetime.now(timezone.utc))
+        return msg.SerializeToString()
+
+    def get_telemetry_proto(self, zone: str) -> bytes:
+        msg = mppt_pb2.Telemetry()
+        msg.zone = zone
+        msg.gateway_id = self.gateway
+        msg.serial = self.serial
+        msg.hw_version = self.hw
+        msg.timestamp.FromDatetime(datetime.now(timezone.utc))
+
+        msg.firmware_version = 17
+        msg.internal_temp_c = int(self.temp_int)
+        msg.external_temp_c = int(self.temp_ext)
+        msg.controller_op_days = 350
+
+        msg.battery_voltage_v = round(self.vbat, 3)
+        msg.battery_soc_pct = int(self.soc)
+        msg.charge_current_a = round(self.ichg, 2)
+        msg.charge_power_w = int(self.ichg * self.vbat)
+        msg.end_of_charge_voltage_v = round(self.vpv_target, 3)
+        msg.charge_mode = self.charge_mode
+        msg.is_night = False
+        msg.bat_op_days = 350
+        msg.energy_in_daily_wh = 450
+        msg.energy_out_daily_wh = 380
+        msg.energy_retained_wh = 210
+        msg.battery_detected = True
+
+        msg.load_on = True
+        msg.night_mode = False
+        msg.lvd_active = self.soc < 10.0
+        msg.user_disconnect = False
+        msg.over_current = False
+        msg.load_current_a = round(self.iload, 2)
+        msg.load_power_w = int(self.iload * self.vbat)
+
+        msg.pv_voltage_v = round(self.vpv, 3)
+        msg.pv_target_voltage_v = round(self.vpv_target, 3)
+        msg.pv_detected = True
+
+        msg.time_since_dusk_min = 0
+        msg.average_length_min = 640
+
+        if self.hw == 3:
+            msg.led_voltage_v = round(self.led_v, 3)
+            msg.led_current_a = round(self.led_i, 2)
+            msg.led_power_w = int(self.led_v * self.led_i)
+            msg.led_status = "Normal"
+            msg.dali_active = False
+
+        msg.fault_battery_over_voltage = self.faults["battery_over_voltage"]
+        msg.fault_pv_over_voltage = self.faults["pv_over_voltage"]
+        msg.fault_controller_over_temp = self.faults["controller_over_temp"]
+        msg.fault_charge_over_current = self.faults["charge_over_current"]
+        msg.fault_lvd_active = self.faults["lvd_active"]
+        msg.fault_over_discharge_current = self.faults["over_discharge_current"]
+        msg.fault_battery_over_temp = self.faults["battery_over_temp"]
+        msg.fault_battery_under_temp = self.faults["battery_under_temp"]
+
+        return msg.SerializeToString()
+
+    def _make_datalogger_base(self, zone: str) -> mppt_pb2.DataloggerPayload:
+        """Build a DataloggerPayload without log entries (caller appends them)."""
+        msg = mppt_pb2.DataloggerPayload()
+        msg.zone = zone
+        msg.gateway_id = self.gateway
+        msg.serial = self.serial
+        msg.timestamp.FromDatetime(datetime.now(timezone.utc))
+        msg.battery_type = "LiFePO4 - Medium Temp"
+        msg.capacity_ah = 128
+        msg.recorded_days = TOTAL_DAYS
+        msg.days_with_lvd = _rnd_int(0, 5)
+        msg.months_without_full_charge = _rnd_int(0, 2)
+        msg.avg_morning_soc_pct = _rnd(20.0, 80.0, 1)
+        msg.total_ah_charge = _rnd(800.0, 8000.0, 1)
+        msg.total_ah_load = _rnd(700.0, 7000.0, 1)
+        return msg
+
+    @staticmethod
+    def _fill_log_entry(entry: mppt_pb2.LogEntry, row: dict):
+        """Populate a LogEntry proto from a row dict produced by _daily/_monthly_row."""
+        entry.index = row["index"]
+        entry.vbat_min_v = row["vbat_min_v"]
+        entry.vbat_max_v = row["vbat_max_v"]
+        entry.vpv_min_v = row["vpv_min_v"]
+        entry.vpv_max_v = row["vpv_max_v"]
+        entry.ah_charge = row["ah_charge"]
+        entry.ah_load = row["ah_load"]
+        entry.il_max_a = row["il_max_a"]
+        entry.ipv_max_a = row["ipv_max_a"]
+        entry.soc_pct = row["soc_pct"]
+        entry.ext_temp_max_c = row["ext_temp_max_c"]
+        entry.ext_temp_min_c = row["ext_temp_min_c"]
+        entry.nightlength_min = row["nightlength_min"]
+        entry.flag_full_charge = row.get("flag_full_charge", False)
+        entry.flag_low_soc = row.get("flag_low_soc", False)
+
+
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"[MQTT] Connected (rc={reason_code})")
     for dev in userdata["devices"]:
-        topic_online = TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial)
-        topic_info = TOPIC_INFO.format(gw=dev.gateway, serial=dev.serial)
-        topic_settings = TOPIC_SETTINGS.format(gw=dev.gateway, serial=dev.serial)
-        topic_cmd = TOPIC_CMD.format(serial=dev.serial)
-
-        client.publish(topic_online, "1", qos=1, retain=True)
-        client.publish(topic_info, json.dumps(dev.get_info()), qos=1, retain=True)
         client.publish(
-            topic_settings, json.dumps(dev.get_settings()), qos=1, retain=True
+            TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial),
+            "1",
+            qos=1,
+            retain=True,
         )
-        client.subscribe(topic_cmd, qos=1)
-        print(f"  online+info+settings: {dev.serial}  (subscribed {topic_cmd})")
+        client.publish(
+            TOPIC_INFO.format(gw=dev.gateway, serial=dev.serial),
+            dev.get_info_proto(),
+            qos=1,
+            retain=True,
+        )
+        client.publish(
+            TOPIC_SETTINGS.format(gw=dev.gateway, serial=dev.serial),
+            dev.get_settings_proto(),
+            qos=1,
+            retain=True,
+        )
+        cmd_topic = TOPIC_CMD.format(serial=dev.serial)
+        client.subscribe(cmd_topic, qos=1)
+        print(f"  {dev.serial}  published info+settings  subscribed {cmd_topic}")
 
 
 def on_message(client, userdata, msg):
-    """Handle incoming high-level control commands from Node-RED."""
+    """Handle inbound mppt::ControlCommand (binary Protobuf)."""
+    cmd = mppt_pb2.ControlCommand()
     try:
-        payload = json.loads(msg.payload)
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        print(f"[CMD] Bad JSON on {msg.topic}: {exc}")
+        cmd.ParseFromString(msg.payload)
+    except Exception as exc:
+        print(f"[CMD] Proto parse error on {msg.topic}: {exc}")
         return
 
-    # Extract serial from topic: mppt/<zone>/<gw>/<serial>/cmd
-    parts = msg.topic.split("/")
-    if len(parts) < 5:
-        print(f"[CMD] Unexpected topic format: {msg.topic}")
-        return
-    serial = parts[3]
-    zone = parts[1]
-    gw = parts[2]
-    command = payload.get("command", "")
-
-    # Find the matching SimDevice
-    dev = next((d for d in userdata["devices"] if d.serial == serial), None)
+    dev = next((d for d in userdata["devices"] if d.serial == cmd.serial), None)
     if dev is None:
-        print(f"[CMD] Unknown serial {serial!r} - ignoring")
+        print(f"[CMD] Unknown serial {cmd.serial!r} — ignoring")
         return
 
-    print(f"\n[CMD] {command} -> {serial}  (from {zone}/{gw})")
+    print(f"\n[CMD] -> {cmd.serial}  (request_id={cmd.request_id})")
 
     ok = False
     reason = "Unknown command"
 
-    if command == "SET_SETTINGS":
-        settings = payload.get("settings", {})
-        if not isinstance(settings, dict) or not settings:
-            reason = "Missing or empty 'settings' object"
-        else:
-            dev.apply_settings(settings)
-            # Re-publish updated retained settings so Node-RED cache refreshes
-            topic_settings = TOPIC_SETTINGS.format(gw=dev.gateway, serial=dev.serial)
-            client.publish(
-                topic_settings, json.dumps(dev.get_settings()), qos=1, retain=True
-            )
-            ok = True
-            reason = "Settings applied"
+    which = cmd.WhichOneof("payload")
 
-    elif command == "CLEAR_DATALOGGER":
+    if which == "set_settings":
+        dev.apply_settings(cmd.set_settings, client)
+        ok, reason = True, "Settings applied"
+
+    elif which == "clear_datalogger":
         dev._burst_sent = False
         dev._new_day_sent = False
         dev._burst_daily = [dev._daily_row(d) for d in range(1, TOTAL_DAYS + 1)]
         dev._burst_monthly = [dev._monthly_row(m) for m in range(1, TOTAL_MONTHS + 1)]
-        print(f"  [{serial}] Datalogger cleared, will re-burst on next publish")
-        ok = True
-        reason = "Datalogger cleared"
+        print(f"  [{dev.serial}] datalogger cleared — will re-burst next publish")
+        ok, reason = True, "Datalogger cleared"
+
+    elif which == "switch_load":
+        print(f"  [{dev.serial}] SWITCH_LOAD on={cmd.switch_load.on} - not implemented")
+        ok, reason = False, "SWITCH_LOAD not implemented"
 
     else:
-        print(f"  [{serial}] Unrecognised command: {command!r}")
+        print(f"  [{dev.serial}] empty or unknown oneof payload")
 
-    # Publish ACK back to Node-RED
-    ack_topic = TOPIC_ACK.format(gw=dev.gateway, serial=serial)
-    ack = {
-        "serial": serial,
-        "command": command,
-        "ok": ok,
-        "reason": reason,
-        "ts": datetime.now(timezone.utc).isoformat(),
-    }
-    client.publish(ack_topic, json.dumps(ack), qos=1)
+    ack = mppt_pb2.CommandAck()
+    ack.serial = cmd.serial
+    ack.request_id = cmd.request_id
+    ack.ok = ok
+    ack.reason = reason
+    ack.timestamp.FromDatetime(datetime.now(timezone.utc))
+
+    ack_topic = TOPIC_ACK.format(gw=dev.gateway, serial=dev.serial)
+    client.publish(ack_topic, ack.SerializeToString(), qos=1)
     status = "OK" if ok else "NOT OK"
-    print(f"  [{serial}] {status}  ACK -> {ack_topic}  ({reason})\n")
+    print(f"  [{dev.serial}] {status} ACK -> {ack_topic}  ({reason})\n")
 
 
-def publish_loop(client, dev, lock):
+def publish_loop(client, dev: SimDevice, lock: threading.Lock):
     topic_state = TOPIC_STATE.format(gw=dev.gateway, serial=dev.serial)
     topic_datalog = TOPIC_DATALOG.format(gw=dev.gateway, serial=dev.serial)
 
     while True:
         dev.step()
-        tele, dl, should_dl = dev.get_payloads()
+        now = time.time()
+        should_dl = False
+        dl_msg = dev._make_datalogger_base("default")
+
+        if not dev._burst_sent:
+            for row in dev._burst_daily:
+                dev._fill_log_entry(dl_msg.daily_logs.add(), row)
+            for row in dev._burst_monthly:
+                dev._fill_log_entry(dl_msg.monthly_logs.add(), row)
+            dev._burst_sent = True
+            should_dl = True
+            print(
+                f"  [{dev.serial}] * burst  {len(dev._burst_daily)}d + {len(dev._burst_monthly)}m"
+            )
+
+        elif not dev._new_day_sent and (now - dev._startup_time) > NEW_DAY_DELAY_S:
+            dev._fill_log_entry(dl_msg.daily_logs.add(), dev._daily_row(30))
+            dev._new_day_sent = True
+            should_dl = True
+            print(f"  [{dev.serial}] * day-30 re-injected")
 
         with lock:
-            client.publish(topic_state, json.dumps(tele), qos=0)
-            if should_dl and dl is not None:
-                client.publish(topic_datalog, json.dumps(dl), qos=1, retain=True)
+            client.publish(topic_state, dev.get_telemetry_proto("default"), qos=0)
+            if should_dl:
+                client.publish(
+                    topic_datalog, dl_msg.SerializeToString(), qos=1, retain=True
+                )
 
-        dc = len(dl["datalogger"]["daily"]) if dl else 0
-        mc = len(dl["datalogger"]["monthly"]) if dl else 0
-        sfx = (f"  {dc}d" if dc else "") + (f"  {mc}m" if mc else "")
         print(
             f"  -> {dev.serial:<10} {dev.charge_mode:<14}"
-            f" SOC={dev.soc:5.1f}%  Vbat={dev.vbat:5.3f}V{sfx}"
+            f" SOC={dev.soc:5.1f}%  Vbat={dev.vbat:5.3f}V"
         )
         time.sleep(PUBLISH_INTERVAL_S)
 
@@ -520,7 +556,7 @@ def main():
     ]
 
     client = mqtt.Client(
-        mqtt.CallbackAPIVersion.VERSION2,
+        CallbackAPIVersion.VERSION2,
         userdata={"devices": devices},
     )
     client.on_connect = on_connect
@@ -552,8 +588,12 @@ def main():
         print("\n[Stopped by user]")
     finally:
         for dev in devices:
-            topic = TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial)
-            client.publish(topic, "0", qos=1, retain=True)
+            client.publish(
+                TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial),
+                "0",
+                qos=1,
+                retain=True,
+            )
         time.sleep(0.3)
         client.loop_stop()
         client.disconnect()

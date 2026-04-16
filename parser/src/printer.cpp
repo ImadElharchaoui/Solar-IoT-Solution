@@ -11,9 +11,7 @@ static inline auto yn(bool b) -> const char * {
     return b ? "Yes" : "No";
 }
 
-void print_system_state(const PhocosTelemetry &t,
-                        const EepromSettings  &settings,
-                        std::time_t            ts) {
+void print_system_state(const PhocosTelemetry &t, const EepromSettings &settings, std::time_t ts) {
     const std::string &dev_type = !settings.device_id.empty() ? settings.device_id : "Unknown";
     const std::string &serial   = !settings.serial_number.empty() ? settings.serial_number : "N/A";
     const std::string &prod_date =
@@ -291,23 +289,16 @@ void print_data_logger(const DataloggerSummary &s,
     print_log_entries(months.entries.data(), months.count, "Monthly Data", "Month");
 }
 
-// ---------------------------------------------------------------------------
-// JSON-per-topic printers (stdout, mirrors what gets published to MQTT)
-// ---------------------------------------------------------------------------
-
 #include "json_builder.h"
 
 void print_info_json(const EepromSettings &settings) {
-    std::cout << "\n[JSON /info]\n"
-              << build_info_json(settings).dump(2) << "\n";
+    std::cout << "\n[JSON /info]\n" << build_info_json(settings).dump(2) << "\n";
 }
 
 void print_state_json(const PhocosTelemetry &t, const EepromSettings &settings, std::time_t ts) {
-    std::cout << "\n[JSON /state]\n"
-              << build_telemetry_json(t, settings, ts).dump(2) << "\n";
+    std::cout << "\n[JSON /state]\n" << build_telemetry_json(t, settings, ts).dump(2) << "\n";
 }
 
 void print_settings_json(const DeviceSettings &s, std::time_t ts) {
-    std::cout << "\n[JSON /settings]\n"
-              << build_settings_json(s, ts).dump(2) << "\n";
+    std::cout << "\n[JSON /settings]\n" << build_settings_json(s, ts).dump(2) << "\n";
 }

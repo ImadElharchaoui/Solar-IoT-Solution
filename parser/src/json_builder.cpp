@@ -11,16 +11,15 @@ static inline auto v16(uint16_t mv) -> double {
 
 auto build_info_json(const EepromSettings &settings) -> nlohmann::json {
     return {
-        {"serial_number",   !settings.serial_number.empty()   ? settings.serial_number   : "Unknown"},
+        {"serial_number", !settings.serial_number.empty() ? settings.serial_number : "Unknown"},
         {"production_date", !settings.production_date.empty() ? settings.production_date : ""},
-        {"type",            !settings.device_id.empty()       ? settings.device_id       : "Unknown"},
-        {"hw_version",      settings.hw_version},
+        {"type", !settings.device_id.empty() ? settings.device_id : "Unknown"},
+        {"hw_version", settings.hw_version},
     };
 }
 
-auto build_telemetry_json(const PhocosTelemetry &t,
-                           const EepromSettings  &settings,
-                           std::time_t            ts) -> nlohmann::json {
+auto build_telemetry_json(const PhocosTelemetry &t, const EepromSettings &settings, std::time_t ts)
+    -> nlohmann::json {
     nlohmann::json j;
 
     j["general"] = {
@@ -132,16 +131,14 @@ static auto log_entries_to_json(const LogEntry *entries, std::size_t count, cons
     return arr;
 }
 
-auto build_datalogger_json(const EepromSettings      &settings,
+auto build_datalogger_json(const EepromSettings    &settings,
                            const DataloggerSummary &s,
                            const DailyLogBuffer    &days,
                            const MonthlyLogBuffer  &months,
                            std::time_t              ts) -> nlohmann::json {
-    const std::string &serial = !settings.serial_number.empty() ? settings.serial_number : "Unknown";
 
     return {
         {"timestamp", static_cast<long long>(ts)},
-        {"serial_number", serial},
         {"eeprom",
          {
              {"battery_type", settings.battery_type},
@@ -163,7 +160,7 @@ auto build_datalogger_json(const EepromSettings      &settings,
              {"months_without_full_charge", s.months_without_full_charge},
              {"avg_morning_soc_pct", round1(static_cast<double>(s.avg_morning_soc_pct))},
              {"total_ah_charge", round1(static_cast<double>(s.total_ah_charge))},
-             {"total_ah_charge_ah", round1(static_cast<double>(s.total_ah_charge))}, // legacy compatibility
+             {"total_ah_charge_ah", round1(static_cast<double>(s.total_ah_charge))},
              {"total_ah_load", round1(static_cast<double>(s.total_ah_load))},
              {"daily", log_entries_to_json(days.entries.data(), days.count, "day")},
              {"monthly", log_entries_to_json(months.entries.data(), months.count, "month")},

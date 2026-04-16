@@ -8,9 +8,27 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
+
+// Helper to read all lines from a file into a vector of strings.
+inline auto read_file_lines(const std::string &path, std::vector<std::string> &lines) -> bool {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        std::fprintf(stderr, "[utils] failed to open file: %s\n", path.c_str());
+        return false;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    return true;
+}
 
 inline auto round1(double v) -> double {
     return std::round(v * 10.0) / 10.0;
@@ -108,6 +126,16 @@ inline auto get_u32(const std::vector<uint8_t> &data, int b0) -> uint32_t {
 inline auto current_timestamp() -> std::time_t {
     const std::time_t NOW = std::time(nullptr);
     return NOW;
+}
+
+inline auto format_timestamp(std::time_t ts) -> std::string {
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", std::gmtime(&ts));
+    return std::string(buf);
+}
+
+inline auto current_timestamp_str() -> std::string {
+    return format_timestamp(current_timestamp());
 }
 
 // Returns the system hostname (used as the MQTT gateway identifier).

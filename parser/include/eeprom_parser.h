@@ -6,13 +6,13 @@
 #include "types.h"
 
 auto parse_eeprom_dump(std::string_view   resp,
-                       EepromSettings      &cfg,
+                       EepromSettings    &cfg,
                        DataloggerSummary &summary,
                        DailyLogBuffer    &daily_logs,
                        MonthlyLogBuffer  &monthly_logs) -> bool;
 
 auto parse_eeprom_dump_raw(std::string_view      resp,
-                           EepromSettings         &cfg,
+                           EepromSettings       &cfg,
                            DataloggerSummary    &summary,
                            DailyLogBuffer       &daily_logs,
                            MonthlyLogBuffer     &monthly_logs,

@@ -186,7 +186,7 @@ static void parse_monthly_logs(const std::vector<uint8_t> &data,
 }
 
 static auto parse_eeprom_bytes(const std::vector<uint8_t> &data,
-                               EepromSettings               &cfg,
+                               EepromSettings             &cfg,
                                DataloggerSummary          &summary,
                                DailyLogBuffer             &daily_logs,
                                MonthlyLogBuffer           &monthly_logs) -> bool {
@@ -230,7 +230,7 @@ static auto decode_eeprom_line(std::string_view sv, std::vector<uint8_t> &out) -
 }
 
 auto parse_eeprom_dump(std::string_view   resp,
-                       EepromSettings      &cfg,
+                       EepromSettings    &cfg,
                        DataloggerSummary &summary,
                        DailyLogBuffer    &daily_logs,
                        MonthlyLogBuffer  &monthly_logs) -> bool {
@@ -242,7 +242,7 @@ auto parse_eeprom_dump(std::string_view   resp,
 }
 
 auto parse_eeprom_dump_raw(std::string_view      resp,
-                           EepromSettings         &cfg,
+                           EepromSettings       &cfg,
                            DataloggerSummary    &summary,
                            DailyLogBuffer       &daily_logs,
                            MonthlyLogBuffer     &monthly_logs,
