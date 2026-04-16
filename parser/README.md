@@ -1,6 +1,6 @@
-# Phocos MPPT Parser and Live Monitor
+# MPPT Parser and Live Monitor
 
-C++ tools for parsing and monitoring Phocos MPPT solar charge controllers over RS485 and local log files, intended for dev/testing environments.
+C++ tools for parsing and monitoring MPPT solar charge controllers over RS485 and local log files, intended for dev/testing environments.
 
 ## Tools
 
@@ -16,6 +16,8 @@ C++ tools for parsing and monitoring Phocos MPPT solar charge controllers over R
 - `make`
 - `paho-mqtt-cpp` - required for `mppt_live` and `mppt_mqtt`
 - `nlohmann/json` - fetched automatically as `include/json.hpp` on first build
+- `libprotobuf-dev` and `protobuf-compiler` - for message serialization
+- `python3-protobuf` - for Python-based monitoring tools
 
 ## Building
 
@@ -30,10 +32,16 @@ make clean
 ### mppt_parser - parse a local log file
 
 ```bash
-./build/mppt_parser data_log.txt
+./build/mppt_parser data_log.txt [--json]
 ```
 
 Reads Space (` `), EEPROM (`!`), and Settings (`"`) lines from the file, prints a summary, and optionally outputs JSON.
+
+#### Options
+
+| Flag | Description |
+|---|---|
+| `--json` | Output telemetry and datalogger history in JSON format to stdout. |
 
 ---
 
@@ -96,30 +104,41 @@ Reads Space (` `), EEPROM (`!`), and Settings (`"`) lines from the file, prints 
 | `dali` | 0\|1 | |
 | `alc` | 0\|1 | |
 
-#### MQTT topics
-
-| Topic | Description |
-|---|---|
-| `mppt/{zone}/{gateway}/{serial}/online` | `1` while connected; LWT publishes `0` (retained) |
-| `mppt/{zone}/{gateway}/{serial}/state` | Real-time telemetry, QoS 0 |
-| `mppt/{zone}/{gateway}/{serial}/datalog` | EEPROM datalogger, QoS 1, retained |
-| `mppt/{zone}/{gateway}/{serial}/settings` | Current settings snapshot, QoS 1, retained |
-
-The `settings` topic is published whenever `--settings` is used. After a write, `state` and `settings` are re-published to reflect the new configuration.
-
 ---
 
 ### mppt_mqtt - publish a log file to MQTT
 
 ```bash
-./build/mppt_mqtt data_log.txt --broker 192.168.1.10 --zone site1
+./build/mppt_mqtt data_log.txt [--zone <z>] [--broker <h>] [--mqtt-port <n>]
 ```
+
+Parses a log file and publishes all found telemetry and datalogger records to the specified MQTT broker.
+
+#### Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--zone <z>` | `default` | MQTT topic zone segment |
+| `--broker <host>` | `localhost` | MQTT broker hostname |
+| `--mqtt-port <n>` | `1883` | MQTT broker port |
 
 ---
 
-## Protocol
+## MQTT topics
 
-The parser supports V2 and V3 Phocos hardware, detected automatically from the EEPROM dump (byte 120) or the Space response field count.
+| Topic | Description |
+|---|---|
+| `mppt/{zone}/{gateway}/{serial}/online` | `1` while connected; LWT publishes `0` (retained) |
+| `mppt/{zone}/{gateway}/{serial}/info` | Static device identity (HW version, serial), QoS 1, retained |
+| `mppt/{zone}/{gateway}/{serial}/state` | Real-time telemetry, QoS 0 |
+| `mppt/{zone}/{gateway}/{serial}/datalog` | EEPROM datalogger, QoS 1, retained |
+| `mppt/{zone}/{gateway}/{serial}/settings` | Current settings snapshot, QoS 1, retained |
+| `mppt/{zone}/{gateway}/{serial}/cmd` | Remote settings command (JSON array of raw commands) |
+| `mppt/{zone}/{gateway}/{serial}/ack` | Remote command acknowledgment |
+
+The `settings` and `info` topics are published once on startup (or when using `--settings`). After a write, `state` and `settings` are re-published to reflect the new configuration.
+
+## Protocol
 
 | Command | Description |
 |---|---|
