@@ -1,174 +1,188 @@
 /**
  * Log file parser with MQTT publish
  *
+ * Publishes binary protobuf payloads.
+ * All unit conversions are handled in proto_builder.h.
+ *
  * Usage:
- *   ./build/mppt_mqtt <logfile.txt>
+ *   ./build/mppt_mqtt <logfile.txt> [--zone <z>] [--broker <h>] [--mqtt-port <n>]
  */
 
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
-#include <vector>
+#include <string_view>
 
 #include "eeprom_parser.h"
 #include "lookups.h"
 #include "mqtt_client.h"
 #include "printer.h"
 #include "proto_builder.h"
+
 #include "space_parser.h"
-#include "types.h"
 #include "utils.h"
-#include <google/protobuf/stubs/common.h>
+
+static void print_usage(const char *prog) {
+    std::cerr << "Usage: " << prog
+              << " <logfile.txt> [--zone <z>] [--broker <h>] [--mqtt-port <n>]\n";
+}
+
+enum class CliOption : uint8_t { K_ZONE, K_BROKER, K_MQTT_PORT, K_UNKNOWN };
+
+static auto get_cli_option(std::string_view arg) -> CliOption {
+    if (arg == "--zone")
+        return CliOption::K_ZONE;
+    if (arg == "--broker")
+        return CliOption::K_BROKER;
+    if (arg == "--mqtt-port")
+        return CliOption::K_MQTT_PORT;
+    return CliOption::K_UNKNOWN;
+}
 
 auto main(int argc, char *argv[]) -> int {
-    GOOGLE_PROTOBUF_VERIFY_VERSION;
-
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <log_file> [--zone <z>] [--broker <h>] [--port <n>]\n";
+        print_usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    const std::string LOG_FILE    = argv[1];
-    std::string       zone        = "default";
-    std::string       broker_host = "localhost";
-    int               broker_port = 1883;
+    const char *log_path    = argv[1];
+    std::string zone        = "default";
+    std::string broker_host = "localhost";
+    int         broker_port = 1883;
+    std::string gateway     = hostname();
 
     for (int i = 2; i < argc; ++i) {
-        const std::string ARG = argv[i];
-        if (ARG == "--zone" && i + 1 < argc) {
-            zone = argv[++i];
-        }
-        if (ARG == "--broker" && i + 1 < argc) {
-            broker_host = argv[++i];
-        }
-        if (ARG == "--port" && i + 1 < argc) {
-            broker_port = std::atoi(argv[++i]);
+        switch (get_cli_option(argv[i])) {
+            case CliOption::K_ZONE:
+                if (i + 1 < argc)
+                    zone = argv[++i];
+                break;
+            case CliOption::K_BROKER:
+                if (i + 1 < argc)
+                    broker_host = argv[++i];
+                break;
+            case CliOption::K_MQTT_PORT:
+                if (i + 1 < argc)
+                    broker_port = std::atoi(argv[++i]);
+                break;
+            case CliOption::K_UNKNOWN:
+            default:
+                std::cerr << "Unknown option '" << argv[i] << "'\n";
+                print_usage(argv[0]);
+                return EXIT_FAILURE;
         }
     }
 
-    std::vector<std::string> lines;
-    if (!read_file_lines(LOG_FILE, lines)) {
+    std::ifstream file(log_path);
+    if (!file.is_open()) {
+        std::cerr << "Error: cannot open '" << log_path << "'\n";
         return EXIT_FAILURE;
     }
 
     PhocosTelemetry   tele{};
     EepromSettings    settings{};
     DataloggerSummary summary{};
-    DailyLogBuffer    daily_logs{};
-    MonthlyLogBuffer  monthly_logs{};
+    DailyLogBuffer    daily_logs;
+    MonthlyLogBuffer  monthly_logs;
 
-    bool have_tele   = false;
-    bool have_eeprom = false;
+    bool have_tele    = false;
+    bool have_eeprom  = false;
+    int  lines_total  = 0;
+    int  records_ok   = 0;
+    int  records_fail = 0;
 
-    int lines_total  = 0;
-    int records_ok   = 0;
-    int records_fail = 0;
+    std::string line;
+    while (std::getline(file, line)) {
+        ++lines_total;
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
 
-    for (const auto &line : lines) {
-        lines_total++;
-        if (is_space_line(line)) {
-            if (parse_phocos_line(line, tele)) {
-                have_tele = true;
-                records_ok++;
-            } else {
-                records_fail++;
-            }
-        } else if (is_eeprom_line(line)) {
-            std::vector<uint8_t> raw;
-            if (parse_eeprom_dump_raw(std::string_view(line).substr(1),
-                                      settings,
-                                      summary,
-                                      daily_logs,
-                                      monthly_logs,
-                                      raw)) {
+        if (is_eeprom_line(line)) {
+            std::string_view dump = std::string_view(line).substr(1);
+            if (parse_eeprom_dump(dump, settings, summary, daily_logs, monthly_logs))
                 have_eeprom = true;
-                records_ok++;
-            } else {
-                records_fail++;
-            }
+            continue;
         }
+        if (!is_space_line(line))
+            continue;
+
+        tele = PhocosTelemetry{};
+        if (parse_phocos_line(line, tele)) {
+            ++records_ok;
+            have_tele = true;
+        } else {
+            ++records_fail;
+            std::cerr << "PARSE FAILED (line " << lines_total << "): " << line.substr(0, 100)
+                      << "\n";
+        }
+    }
+
+    if (!have_tele && !have_eeprom) {
+        std::cerr << "No parseable data found in '" << log_path << "'\n";
+        return EXIT_FAILURE;
     }
 
     settings.hw_version =
         resolve_hw_version(have_eeprom, settings.hw_version, have_tele, tele.hw_version);
 
-    std::time_t ts = current_timestamp();
+    const std::time_t ts = current_timestamp();
 
-    // Console debug output (JSON to stdout)
     if (have_tele) {
         print_system_state(tele, settings, ts);
-        print_state_json(tele, settings, ts);
     }
     if (have_eeprom) {
         print_eeprom_config(settings);
         print_data_logger(summary, daily_logs, monthly_logs);
-        print_info_json(settings);
-        print_settings_json(settings.settings, ts);
     }
 
     const std::string SERIAL = !settings.serial_number.empty() ? settings.serial_number : "unknown";
-    const std::string BASE_TOPIC = "mppt/" + zone + "/" + hostname() + "/" + SERIAL;
+    const std::string BASE_TOPIC = "mppt/" + zone + "/" + gateway + "/" + SERIAL;
 
     MqttConfig mqtt_cfg;
     mqtt_cfg.host        = broker_host;
     mqtt_cfg.port        = broker_port;
-    mqtt_cfg.client_id   = "mppt_" + hostname() + "_" + SERIAL;
+    mqtt_cfg.client_id   = "mppt_" + gateway + "_" + SERIAL;
     mqtt_cfg.lwt_topic   = BASE_TOPIC + "/online";
     mqtt_cfg.lwt_payload = "0";
     mqtt_cfg.lwt_retain  = true;
 
+    std::cerr << "\n[mqtt] broker=" << broker_host << ":" << broker_port << "  zone=" << zone
+              << "  serial=" << SERIAL << "\n";
+
     MqttClient client(mqtt_cfg);
-    bool       connected = client.connect();
+    const bool connected = client.connect();
 
     if (connected) {
         client.publish(BASE_TOPIC + "/online", "1", /*retain=*/true);
 
-        // 1: Static identity
         if (have_eeprom) {
-            std::string bytes;
-            (void) build_device_info_proto(settings).SerializeToString(&bytes);
-            std::cerr << "[mqtt] info       " << bytes.size() << " B -> " << BASE_TOPIC
-                      << "/info\n";
-            client.publish(BASE_TOPIC + "/info", bytes, /*retain=*/true, /*qos=*/1);
-        }
+            std::string buf = proto_to_string(build_device_info_proto(settings, ts));
+            std::cerr << "[mqtt] -> /info     " << buf.size() << " B\n";
+            client.publish(BASE_TOPIC + "/info", buf, /*retain=*/true, /*qos=*/1);
 
-        // 2: Settings
-        if (have_eeprom) {
-            std::string bytes;
-            (void) build_device_settings_proto(settings.settings, SERIAL, ts)
-                .SerializeToString(&bytes);
-            std::cerr << "[mqtt] settings   " << bytes.size() << " B -> " << BASE_TOPIC
-                      << "/settings\n";
-            client.publish(BASE_TOPIC + "/settings", bytes, /*retain=*/true, /*qos=*/1);
-        }
+            buf = proto_to_string(build_device_settings_proto(settings.settings, ts));
+            std::cerr << "[mqtt] -> /settings " << buf.size() << " B\n";
+            client.publish(BASE_TOPIC + "/settings", buf, /*retain=*/true, /*qos=*/1);
 
-        // 3: Telemetry (QoS 0)
-        if (have_tele) {
-            std::string bytes;
-            (void) build_telemetry_proto(tele, zone, hostname(), SERIAL, ts)
-                .SerializeToString(&bytes);
-            std::cerr << "[mqtt] telemetry  " << bytes.size() << " B -> " << BASE_TOPIC
-                      << "/state\n";
-            if (client.publish(BASE_TOPIC + "/state", bytes)) {
-                std::cerr << "[mqtt] state OK\n";
-            } else {
-                std::cerr << "[mqtt] state FAILED\n";
-            }
-        }
-
-        // 4: Datalogger (QoS 1 + retained)
-        if (have_eeprom) {
-            std::string bytes;
-            (void) build_datalogger_proto(
-                settings, summary, daily_logs, monthly_logs, zone, hostname(), SERIAL, ts)
-                .SerializeToString(&bytes);
-            std::cerr << "[mqtt] datalogger " << bytes.size() << " B -> " << BASE_TOPIC
-                      << "/datalog\n";
-            if (client.publish(BASE_TOPIC + "/datalog", bytes, /*retain=*/true, /*qos=*/1)) {
-                std::cerr << "[mqtt] datalog OK\n";
-            } else {
+            buf = proto_to_string(build_datalogger_proto(summary, daily_logs, monthly_logs, ts));
+            std::cerr << "[mqtt] -> /datalog  " << buf.size() << " B\n";
+            if (!client.publish(BASE_TOPIC + "/datalog", buf, /*retain=*/true, /*qos=*/1))
                 std::cerr << "[mqtt] datalog FAILED\n";
-            }
+        }
+
+        if (have_tele) {
+            const std::string BUF = proto_to_string(build_telemetry_proto(tele, ts));
+            std::cerr << "[mqtt] -> /state    " << BUF.size() << " B\n";
+            if (!client.publish(BASE_TOPIC + "/state", BUF, /*retain=*/false, /*qos=*/0))
+                std::cerr << "[mqtt] state FAILED\n";
+        }
+
+        if (have_tele && tele.hw_version == 3 && tele.fault_flags.any()) {
+            const std::string BUF = proto_to_string(build_fault_status_proto(tele, ts));
+            std::cerr << "[mqtt] -> /faults   " << BUF.size() << " B\n";
+            client.publish(BASE_TOPIC + "/faults", BUF, /*retain=*/true, /*qos=*/1);
         }
 
         client.disconnect();
@@ -182,6 +196,5 @@ auto main(int argc, char *argv[]) -> int {
               << "  Records FAIL : " << records_fail << "\n"
               << "--------------------------------------------\n";
 
-    google::protobuf::ShutdownProtobufLibrary();
     return (records_fail == 0 && connected) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

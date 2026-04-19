@@ -2,7 +2,10 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
+
+#include "../proto_gen/mppt.pb.h"
 
 #include "constants.h"
 
@@ -75,11 +78,50 @@ struct FaultStatusFlags {
         f.battery_under_temp     = (v & 0x80) != 0;
         return f;
     }
+
+    // Returns the raw bitmask matching Field 40 of the V3 Space command
+    // and the proto FaultStatus.fault_mask field.
+    // For V2 devices (no field 40), this will correctly return 0.
+    [[nodiscard]] auto to_bitmask() const -> uint32_t {
+        uint32_t v = 0;
+        if (battery_over_voltage) {
+            v |= (1U << 0); // 0x01
+        }
+        if (pv_over_voltage) {
+            v |= (1U << 1); // 0x02
+        }
+        if (controller_over_temp) {
+            v |= (1U << 2); // 0x04
+        }
+        if (charge_over_current) {
+            v |= (1U << 3); // 0x08
+        }
+        if (lvd_active) {
+            v |= (1U << 4); // 0x10
+        }
+        if (over_discharge_current) {
+            v |= (1U << 5); // 0x20
+        }
+        if (battery_over_temp) {
+            v |= (1U << 6); // 0x40
+        }
+        if (battery_under_temp) {
+            v |= (1U << 7); // 0x80
+        }
+
+        return v;
+    }
+
+    [[nodiscard]] auto any() const -> bool {
+        return to_bitmask() != 0;
+    }
 };
 
 struct DeviceSettings {
     // Battery
-    uint8_t  battery_type_index   = 0; // 0-2 (V2: AGM/Liquid/LiFePO4, V3: LFP temps)
+    std::optional<mppt::BatteryType>
+        battery_type; // 0-2 (V2: AGM/Liquid/LiFePO4, V3: LFP temps)
+                      // mppt::NightMode night_mode = mppt::NIGHT_MODE_OFF;HH
     uint16_t capacity_ah          = 0;
     uint16_t lvd_voltage_mv       = 0; // effective LVD (current or voltage, resolved)
     uint16_t lvd_level_current_mv = 0; // raw current-mode LVD register
@@ -87,17 +129,17 @@ struct DeviceSettings {
     bool     lvd_mode_voltage     = false;
 
     // Lighting
-    uint8_t  night_mode_index   = 0; // 0=Off 1=D2D 2=DD 3=MN
-    uint16_t evening_minutes_mn = 0;
-    uint16_t morning_minutes_mn = 0;
-    uint16_t night_threshold_mv = 0;
+    std::optional<mppt::NightMode> night_mode_index; // 0=Off 1=D2D 2=DD 3=MN
+    uint16_t                       evening_minutes    = 0;
+    uint16_t                       morning_minutes    = 0;
+    uint16_t                       night_threshold_mv = 0;
 
     // Dimming
-    uint8_t  night_mode_dimming_index   = 0;
-    uint16_t evening_minutes_dimming_mn = 0;
-    uint16_t morning_minutes_dimming_mn = 0;
-    uint8_t  dimming_pct                = 0;
-    uint8_t  base_dimming_pct           = 0;
+    std::optional<mppt::NightMode> night_mode_dimming_index;
+    uint16_t                       evening_minutes_dimming = 0;
+    uint16_t                       morning_minutes_dimming = 0;
+    uint8_t                        dimming_pct             = 0;
+    uint8_t                        base_dimming_pct        = 0;
 
     // Advanced
     bool dali_power_enable  = false;
@@ -191,6 +233,39 @@ struct StateFlags {
         f.temp_over_load_over  = (v & 0x0100) != 0;
         return f;
     }
+
+    // Packs all flags into a single uint32 bitmask for proto LogEntry.state_flags.
+    [[nodiscard]] auto to_bitmask() const -> uint32_t {
+        uint32_t v = 0;
+        if (load_disconnect) {
+            v |= (1U << 0);
+        }
+        if (full_charge) {
+            v |= (1U << 1);
+        }
+        if (pv_over_current) {
+            v |= (1U << 2);
+        }
+        if (load_over_current) {
+            v |= (1U << 3);
+        }
+        if (battery_over_voltage) {
+            v |= (1U << 4);
+        }
+        if (low_soc) {
+            v |= (1U << 5);
+        }
+        if (temp_over_pv_over) {
+            v |= (1U << 6);
+        }
+        if (temp_over_pv_low) {
+            v |= (1U << 7);
+        }
+        if (temp_over_load_over) {
+            v |= (1U << 8);
+        }
+        return v;
+    }
 };
 
 // One entry of recorded data from the EEPROM circular buffer (Daily or
@@ -205,7 +280,7 @@ struct LogEntry {
     uint16_t vpv_min_mv      = 0;
     uint16_t il_max_ma       = 0;
     uint16_t ipv_max_ma      = 0;
-    float    soc_pct         = 0.0F;
+    uint16_t soc_pct         = 0;
     int8_t   ext_temp_max_c  = 0;
     int8_t   ext_temp_min_c  = 0;
     uint16_t nightlength_min = 0;
@@ -257,8 +332,8 @@ struct EepromSettings {
 struct DataloggerSummary {
     uint16_t days_with_lvd              = 0;
     uint8_t  months_without_full_charge = 0;
-    float    avg_morning_soc_pct        = 0.0F;
-    float    total_ah_charge            = 0.0F;
-    float    total_ah_load              = 0.0F;
+    uint16_t avg_morning_soc_pct        = 0;
+    uint16_t total_ah_charge            = 0;
+    uint16_t total_ah_load              = 0;
     uint16_t num_days                   = 0;
 };

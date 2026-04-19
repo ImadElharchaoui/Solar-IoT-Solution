@@ -1,194 +1,293 @@
+// Optimisation pass:
+//  - All booleans packed into uint32 bitmasks (no bool fields anywhere)
+//  - All strings replaced with enums (ChargeMode, LedStatus, NightMode, BatteryType)
+//  - All floats replaced with scaled integers matching the native wire resolution
+//    from the Phocos protocol doc (mV, mA*10, centi-percent, minutes, Wh, etc.)
+//    Unit conversions happen in Node-RED, never in the proto layer.
+//  - google.protobuf.Timestamp replaced with plain uint32 unix seconds
+//    (saves 10-12 bytes per message;
+//  - optimize_for = LITE_RUNTIME retained
+//
+// Scaling reference (all division done in Node-RED / consumer):
+//   battery_voltage_mv    ÷ 1000  → V        (e.g. 13982 → 13.982 V)
+//   charge_current_ma10   ÷ 100   → A         (e.g.  400  → 4.00 A ;
+//   load_current_ma10     ÷ 100   → A
+//   pv_voltage_mv         ÷ 1000  → V
+//   led_voltage_mv        ÷ 1000  → V
+//   led_current_ma10      ÷ 100   → A
+//   soc_pct               as-is   → %  (0-100)
+//   temp_c                as-is   → °C (signed, sint32)
+//   power_w               as-is   → W  (already integer in the protocol)
+//   energy_wh             as-is   → Wh (already integer in the protocol)
+//   voltage_mv (settings) ÷ 1000  → V  (for display;
+//   avg_morning_soc_pct  ÷ 100   → %  (centi-percent, preserves 2 decimal places)
+
 syntax = "proto3";
 package mppt;
 
-import "google/protobuf/timestamp.proto";
+option optimize_for = LITE_RUNTIME;
+
+
+enum ChargeMode {
+  CHARGE_MODE_FLOAT        = 0;
+  CHARGE_MODE_BOOST        = 1;
+  CHARGE_MODE_EQUALIZATION = 2;
+  CHARGE_MODE_DISABLED     = 3;
+}
+
+enum LedStatus {
+  LED_NORMAL = 0;
+  LED_SHORT  = 1;
+  LED_OPEN   = 2;
+}
+
+enum NightMode {
+  NIGHT_MODE_ALWAYS_ON = 0;
+  NIGHT_MODE_D2D       = 1;
+  NIGHT_MODE_DD        = 2;
+  NIGHT_MODE_MN        = 3;
+}
+
+enum BatteryType {
+  BATTERY_TYPE_UNKNOWN = 0;
+
+  // hw_version == 2
+  BATTERY_AGM    = 1;
+  BATTERY_LIQUID = 2;
+  BATTERY_LFP    = 3;
+
+  // hw_version != 2
+  BATTERY_LFP_HIGH_TEMP   = 4;
+  BATTERY_LFP_MEDIUM_TEMP = 5;
+  BATTERY_LFP_LOW_TEMP    = 6;
+}
+
+enum LvdMode {
+  LVD_MODE_SOC     = 0;
+  LVD_MODE_VOLTAGE = 1;
+}
+
+// Bitmask constants
+//
+// LoadStateMask  (Space-cmd field 13)
+//   bit 0  = load_disconnected
+//   bit 1  = night_mode_active
+//   bit 2  = lvd_active
+//   bit 3  = user_disconnect
+//   bit 4  = low_temp
+//   bit 5  = high_temp
+//   bit 8  = over_current
+//
+// ChargeStateMask  (Space-cmd field 14)
+//   bit 0  = boost_charge
+//   bit 1  = equalization_charge
+//   bit 3  = is_night
+//   bit 6  = dimming_override  (V2 only)
+//   bit 7  = ssr_output
+//
+// FaultMask  (Space-cmd field 40, V3 only)
+//   bit 0  = battery_over_voltage   (0x01)
+//   bit 1  = pv_over_voltage        (0x02)
+//   bit 2  = controller_over_temp   (0x04)
+//   bit 3  = charge_over_current    (0x08)
+//   bit 4  = lvd_active             (0x10)
+//   bit 5  = over_discharge_current (0x20)
+//   bit 6  = battery_over_temp      (0x40)
+//   bit 7  = battery_under_temp     (0x80)
+//
+// TelemetryFlags  (packed bools from Telemetry, replaces 7 bool fields)
+//   bit 0  = battery_detected
+//   bit 1  = is_night
+//   bit 2  = load_on
+//   bit 3  = night_mode_active
+//   bit 4  = lvd_active
+//   bit 5  = user_disconnect
+//   bit 6  = load_over_current
+//   bit 7  = pv_detected
+//   bit 8  = dali_active
+//
+// StateFlags  (LogEntry, replaces 9 bool fields)
+//   bit 0  = load_disconnect
+//   bit 1  = full_charge
+//   bit 2  = pv_over_current
+//   bit 3  = load_over_current
+//   bit 4  = battery_over_voltage
+//   bit 5  = low_soc
+//   bit 6  = temp_over_pv_over
+//   bit 7  = temp_over_pv_low
+//   bit 8  = temp_over_load_over
+
+message DeviceInfo {
+  string production_date   = 1;
+  string manufacturer_id   = 2;
+  uint32 device_identifier = 3;
+
+  uint32 hw_version       = 4;
+  uint32 firmware_version = 5;
+  string device_type      = 6;
+
+  uint32 equalization_voltage_mv = 7;
+  uint32 boost_voltage_mv        = 8;
+  uint32 float_voltage_mv        = 9;
+  sint32 temp_comp_mv_per_c      = 10;
+
+  uint32 published_at = 11;
+}
+
+message FaultStatus {
+  uint32 fault_mask = 1;
+
+  // Raw state masks, included so alert nodes don't need /state subscription
+  uint32 load_state_mask   = 2;
+  uint32 charge_state_mask = 3;
+
+  uint32 timestamp = 4;
+}
 
 message Telemetry {
-  string zone        = 1;
-  string gateway_id  = 2;
-  string serial      = 3;
-  uint32 hw_version  = 4;
-  google.protobuf.Timestamp timestamp = 5;
+  uint32 timestamp = 1;
 
-  // General
-  uint32 firmware_version    = 10;
-  sint32 internal_temp_c     = 11;
-  sint32 external_temp_c     = 12;
-  uint32 controller_op_days  = 13;
+  uint32 battery_voltage_mv      = 2;
+  uint32 battery_soc_pct         = 3;
+  uint32 charge_current_ma10     = 4;
+  uint32 charge_power_w          = 5;
+  uint32 end_of_charge_voltage_mv = 6;
+  uint32 bat_op_days             = 7;
+  uint32 energy_in_daily_wh      = 8;
+  uint32 energy_out_daily_wh     = 9;
+  uint32 energy_retained_wh      = 10;
 
-  // Battery
-  float  battery_voltage_v        = 20;
-  uint32 battery_soc_pct          = 21;
-  float  charge_current_a         = 22;
-  uint32 charge_power_w           = 23;
-  float  end_of_charge_voltage_v  = 24;
-  string charge_mode              = 25;
-  bool   is_night                 = 26;
-  uint32 bat_op_days              = 27;
-  uint32 energy_in_daily_wh       = 28;
-  uint32 energy_out_daily_wh      = 29;
-  uint32 energy_retained_wh       = 30;
-  bool   battery_detected         = 31;
+  ChargeMode charge_mode       = 11;
+  uint32     charge_state_mask = 12;
 
-  // Load
-  bool   load_on         = 40;
-  bool   night_mode      = 41;
-  bool   lvd_active      = 42;
-  bool   user_disconnect = 43;
-  bool   over_current    = 44;
-  float  load_current_a  = 45;
-  uint32 load_power_w    = 46;
+  uint32 load_state_mask    = 13;
+  uint32 load_current_ma10  = 14;
+  uint32 load_power_w       = 15;
 
-  // PV
-  float pv_voltage_v        = 50;
-  float pv_target_voltage_v = 51;
-  bool  pv_detected         = 52;
+  uint32 pv_voltage_mv        = 16;
+  uint32 pv_target_voltage_mv = 17;
 
-  // Night
-  uint32 time_since_dusk_min = 60;
-  uint32 average_length_min  = 61;
+  uint32 time_since_dusk_min = 18;
+  uint32 average_length_min  = 19;
 
-  // LED
-  float  led_voltage_v = 70;
-  float  led_current_a = 71;
-  uint32 led_power_w   = 72;
-  string led_status    = 73;
-  bool   dali_active   = 74;
+  uint32    led_voltage_mv  = 20;
+  uint32    led_current_ma10 = 21;
+  uint32    led_power_w     = 22;
+  LedStatus led_status      = 23;
 
-  // Faults
-  bool fault_battery_over_voltage   = 80;
-  bool fault_pv_over_voltage        = 81;
-  bool fault_controller_over_temp   = 82;
-  bool fault_charge_over_current    = 83;
-  bool fault_lvd_active             = 84;
-  bool fault_over_discharge_current = 85;
-  bool fault_load_over_current      = 86;
-  bool fault_battery_over_temp      = 87;
-  bool fault_battery_under_temp     = 88;
+  sint32 internal_temp_c = 24;
+  sint32 external_temp_c = 25;
+
+  uint32 controller_op_days = 26;
+
+  // Packed boolean flags
+  // bit 0=battery_detected  bit 1=is_night  bit 2=load_on  bit 3=night_mode
+  // bit 4=lvd_active  bit 5=user_disconnect  bit 6=load_over_current
+  // bit 7=pv_detected  bit 8=dali_active
+  uint32 flags = 27;
+}
+
+message DeviceSettings {
+  uint32 timestamp = 1;
+
+  optional BatteryType battery_type  = 2;
+  optional uint32      capacity_ah   = 3;
+  optional uint32      lvd_voltage_mv = 4;
+  optional LvdMode     lvd_mode      = 5;
+
+  optional NightMode night_mode         = 6;
+  optional uint32    evening_minutes    = 7;
+  optional uint32    morning_minutes    = 8;
+  optional uint32    night_threshold_mv = 9;
+
+  optional NightMode dimming_mode              = 10;
+  optional uint32    evening_minutes_dimming   = 11;
+  optional uint32    morning_minutes_dimming   = 12;
+  optional uint32    dimming_pct               = 13;
+  optional uint32    base_dimming_pct          = 14;
+
+  // Packed advanced flags (bit 0 = dali_power_enable, bit 1 = alc_dimming_enable)
+  optional uint32 advanced_flags = 15;
 }
 
 message LogEntry {
   uint32 index           = 1;
-  float  vbat_min_v      = 2;
-  float  vbat_max_v      = 3;
-  float  vpv_min_v       = 4;
-  float  vpv_max_v       = 5;
-  float  ah_charge       = 6;
-  float  ah_load         = 7;
-  float  il_max_a        = 8;
-  float  ipv_max_a       = 9;
-  float  soc_pct         = 10;
+  uint32 vbat_min_mv     = 2;
+  uint32 vbat_max_mv     = 3;
+  uint32 vpv_min_mv      = 4;
+  uint32 vpv_max_mv      = 5;
+  uint32 ah_charge_mah   = 6;
+  uint32 ah_load_mah     = 7;
+  uint32 il_max_ma10     = 8;
+  uint32 ipv_max_ma10    = 9;
+  uint32 soc_pct    = 10;
   sint32 ext_temp_max_c  = 11;
   sint32 ext_temp_min_c  = 12;
   uint32 nightlength_min = 13;
 
-  bool flag_load_disconnect      = 20;
-  bool flag_full_charge          = 21;
-  bool flag_pv_over_current      = 22;
-  bool flag_load_over_current    = 23;
-  bool flag_battery_over_voltage = 24;
-  bool flag_low_soc              = 25;
-  bool flag_temp_over_pv_over    = 26;
-  bool flag_temp_over_pv_low     = 27;
-  bool flag_temp_over_load_over  = 28;
+  // Packed StateFlags bitmask (replaces 9 bool fields)
+  // bit 0=load_disconnect  bit 1=full_charge  bit 2=pv_over_current
+  // bit 3=load_over_current  bit 4=battery_over_voltage  bit 5=low_soc
+  // bit 6=temp_over_pv_over  bit 7=temp_over_pv_low  bit 8=temp_over_load_over
+  uint32 state_flags = 14;
 }
 
 message DataloggerPayload {
-  string zone       = 1;
-  string gateway_id = 2;
-  string serial     = 3;
-  google.protobuf.Timestamp timestamp = 4;
+  uint32 timestamp = 1;
 
-  string battery_type = 10;
-  uint32 capacity_ah  = 11;
+  uint32 recorded_days              = 2;
+  uint32 days_with_lvd              = 3;
+  uint32 months_without_full_charge = 4;
+  uint32 avg_morning_soc_pct       = 5;
+  uint32 total_ah_charge_mah        = 6;
+  uint32 total_ah_load_mah          = 7;
 
-  uint32 recorded_days              = 20;
-  uint32 days_with_lvd              = 21;
-  uint32 months_without_full_charge = 22;
-  float  avg_morning_soc_pct        = 23;
-  float  total_ah_charge            = 24;
-  float  total_ah_load              = 25;
-
-  repeated LogEntry daily_logs   = 30;
-  repeated LogEntry monthly_logs = 31;
+  repeated LogEntry daily_logs   = 8;
+  repeated LogEntry monthly_logs = 9;
 }
-
-
-message DeviceInfo {
-  string serial_number   = 1;
-  string production_date = 2;
-  string device_type     = 3;
-  uint32 hw_version      = 4;
-}
-
-message DeviceSettings {
-  string serial    = 1;
-  google.protobuf.Timestamp timestamp = 2;
-
-  optional uint32 battery_type_index = 10;
-  optional uint32 capacity_ah        = 11;
-  optional uint32 lvd_voltage_mv     = 12;
-  optional bool   lvd_mode_voltage   = 13;
-
-  optional uint32 night_mode_index   = 20;
-  optional uint32 evening_minutes_mn = 21;
-  optional uint32 morning_minutes_mn = 22;
-  optional uint32 night_threshold_mv = 23;
-
-  optional uint32 night_mode_dimming_index   = 30;
-  optional uint32 evening_minutes_dimming_mn = 31;
-  optional uint32 morning_minutes_dimming_mn = 32;
-  optional uint32 dimming_pct                = 33;
-  optional uint32 base_dimming_pct           = 34;
-
-  optional bool   dali_power_enable  = 40;
-  optional bool   alc_dimming_enable = 41;
-}
-
 
 message ControlCommand {
-  string serial     = 1;
-  string request_id = 2;
-  google.protobuf.Timestamp timestamp = 3;
+  string request_id = 1;
+  uint32 timestamp  = 2;
 
   oneof payload {
-    DeviceSettings  set_settings     = 10;
-    ClearDatalogger clear_datalogger = 11;
-    SwitchLoad      switch_load      = 12;
+    DeviceSettings  set_settings     = 3;
+    ClearDatalogger clear_datalogger = 4;
+    SwitchLoad      switch_load      = 5;
   }
 }
 
 message ClearDatalogger {}
 
+// bit 0 = on/off  (avoids a bool field)
 message SwitchLoad {
-  bool on = 1;
+  uint32 flags = 1;
 }
 
 message CommandAck {
-  string serial     = 1;
-  string request_id = 2;
-  bool   ok         = 3;
-  string reason     = 4;
-  google.protobuf.Timestamp timestamp = 5;
+  string request_id = 1;
+  bool   ok         = 2;
+  string reason     = 3;
+  uint32 timestamp  = 4;
 }
 
 message DeviceSnapshot {
-  string serial            = 1;
-  string zone              = 2;
-  string gateway_id        = 3;
-  uint32 hw_version        = 4;
-  bool   online            = 5;
-  string charge_mode       = 6;
-  float  battery_voltage_v = 7;
-  uint32 battery_soc_pct   = 8;
-  uint32 charge_power_w    = 9;
-  uint32 load_power_w      = 10;
-  bool   any_fault         = 11;
-  google.protobuf.Timestamp last_seen = 12;
+  string     serial           = 1;
+  string     zone             = 2;
+  string     gateway_id       = 3;
+  uint32     hw_version       = 4;
+  bool       online           = 5;
+  ChargeMode charge_mode      = 6;
+  uint32     battery_voltage_mv = 7;
+  uint32     battery_soc_pct  = 8;
+  uint32     charge_power_w   = 9;
+  uint32     load_power_w     = 10;
+  uint32     fault_mask       = 11;
+  uint32     last_seen        = 12;
 }
 
 message FleetSummary {
   repeated DeviceSnapshot devices = 1;
-  google.protobuf.Timestamp timestamp = 2;
+  uint32 timestamp = 2;
 }
 

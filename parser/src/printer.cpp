@@ -177,15 +177,15 @@ void print_eeprom_config(const EepromSettings &settings) {
     std::cout << std::fixed << std::setprecision(3);
     row("Night Threshold", mv_to_v(settings.settings.night_threshold_mv), " V");
     row("Mode", settings.night_mode);
-    row("Evening Duration", std::to_string(settings.settings.evening_minutes_mn) + " min");
-    row("Morning Duration", std::to_string(settings.settings.morning_minutes_mn) + " min");
+    row("Evening Duration", std::to_string(settings.settings.evening_minutes) + " min");
+    row("Morning Duration", std::to_string(settings.settings.morning_minutes) + " min");
 
     std::cout << "\n[Dimming]\n";
     row("Dimming Mode", settings.night_mode_dimming);
     row("Evening Dim Duration",
-        std::to_string(settings.settings.evening_minutes_dimming_mn) + " min");
+        std::to_string(settings.settings.evening_minutes_dimming) + " min");
     row("Morning Dim Duration",
-        std::to_string(settings.settings.morning_minutes_dimming_mn) + " min");
+        std::to_string(settings.settings.morning_minutes_dimming) + " min");
     row("Dimming Level", std::to_string(settings.settings.dimming_pct) + " %");
     row("Base Dimming Level", std::to_string(settings.settings.base_dimming_pct) + " %");
 

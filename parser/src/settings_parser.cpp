@@ -73,8 +73,10 @@ auto build_write_commands(const DeviceSettings &s, int hw_version) -> std::vecto
 
     // Evening/morning minutes are zeroed when night mode is Off (0) or D2D (1),
     // since those modes don't use a fixed on-duration.
-    const int EVENING_MIN = (s.night_mode_index <= 1) ? 0 : s.evening_minutes_mn;
-    const int MORNING_MIN = (s.night_mode_index <= 1) ? 0 : s.morning_minutes_mn;
+    const int EVENING_MIN =
+        (s.night_mode_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON) <= 1) ? 0 : s.evening_minutes;
+    const int MORNING_MIN =
+        (s.night_mode_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON) <= 1) ? 0 : s.morning_minutes;
 
     const bool IS_V3 = (hw_version == 3);
 
@@ -83,15 +85,18 @@ auto build_write_commands(const DeviceSettings &s, int hw_version) -> std::vecto
 
     cmds.emplace_back("&GAA3C00");                              // 1. Unlock EEPROM
     cmds.emplace_back(h_cmd("1B", s.lvd_mode_voltage ? 1 : 0)); // 2. LVD mode
-    cmds.emplace_back(h_cmd("1C", s.battery_type_index));       // 3. Battery type
+    cmds.emplace_back(h_cmd(
+        "1C", static_cast<int>(s.battery_type.value_or(mppt::BATTERY_LFP_HIGH_TEMP)))); // 3. Battery type
 
     if (IS_V3) {
         cmds.emplace_back(h_cmd("3F", s.dali_power_enable ? 1 : 0));  // 4. DALI (V3 only)
         cmds.emplace_back(h_cmd("40", s.alc_dimming_enable ? 1 : 0)); // 5. ALC  (V3 only)
     }
 
-    cmds.emplace_back(h_cmd("00", s.night_mode_index));         // 6. Night mode
-    cmds.emplace_back(h_cmd("09", s.night_mode_dimming_index)); // 7. Dim schedule
+    cmds.emplace_back(
+        h_cmd("00", static_cast<int>(s.night_mode_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON)))); // 6. Night mode
+    cmds.emplace_back(h_cmd(
+        "09", static_cast<int>(s.night_mode_dimming_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON)))); // 7. Dim schedule
     cmds.emplace_back(h_cmd("23", s.dimming_pct));              // 8. Dimming %
     cmds.emplace_back(h_cmd("24", CLAMPED_BASE));               // 9. Base dimming %
 
@@ -100,8 +105,8 @@ auto build_write_commands(const DeviceSettings &s, int hw_version) -> std::vecto
     cmds.emplace_back(m_cmd("21", s.night_threshold_mv));         // 12. Night thresh mV
     cmds.emplace_back(m_cmd("01", EVENING_MIN));                  // 13. Evening min
     cmds.emplace_back(m_cmd("03", MORNING_MIN));                  // 14. Morning min
-    cmds.emplace_back(m_cmd("0A", s.evening_minutes_dimming_mn)); // 15. Dim evening min
-    cmds.emplace_back(m_cmd("0C", s.morning_minutes_dimming_mn)); // 16. Dim morning min
+    cmds.emplace_back(m_cmd("0A", s.evening_minutes_dimming)); // 15. Dim evening min
+    cmds.emplace_back(m_cmd("0C", s.morning_minutes_dimming)); // 16. Dim morning min
 
     // Load disconnect: sends 0 when disconnect is active, 1 when connected
     cmds.emplace_back(k_cmd("55", s.load_disconnect_mode ? 0 : 1)); // 17. Load mode
@@ -178,7 +183,7 @@ auto apply_settings_patch(std::string_view kv, DeviceSettings &s) -> bool {
 
     switch (get_setting_key(KEY_STR)) {
         case SettingKey::K_BATTERY_TYPE:
-            s.battery_type_index = static_cast<uint8_t>(std::clamp(val, 0, 2));
+            s.battery_type = static_cast<mppt::BatteryType>(std::clamp(val, 0, 2));
             break;
         case SettingKey::K_CAPACITY_AH:
             s.capacity_ah = static_cast<uint16_t>(std::clamp(val, 1, 500));
@@ -197,22 +202,22 @@ auto apply_settings_patch(std::string_view kv, DeviceSettings &s) -> bool {
             s.night_threshold_mv = static_cast<uint16_t>(std::clamp(val, 4000, 14000));
             break;
         case SettingKey::K_NIGHT_MODE:
-            s.night_mode_index = static_cast<uint8_t>(std::clamp(val, 0, 3));
+            s.night_mode_index = static_cast<mppt::NightMode>(std::clamp(val, 0, 3));
             break;
         case SettingKey::K_EVENING_MIN:
-            s.evening_minutes_mn = static_cast<uint16_t>(std::clamp(val, 0, 600));
+            s.evening_minutes = static_cast<uint16_t>(std::clamp(val, 0, 600));
             break;
         case SettingKey::K_MORNING_MIN:
-            s.morning_minutes_mn = static_cast<uint16_t>(std::clamp(val, 0, 600));
+            s.morning_minutes = static_cast<uint16_t>(std::clamp(val, 0, 600));
             break;
         case SettingKey::K_DIM_MODE:
-            s.night_mode_dimming_index = static_cast<uint8_t>(std::clamp(val, 0, 3));
+            s.night_mode_dimming_index = static_cast<mppt::NightMode>(std::clamp(val, 0, 3));
             break;
         case SettingKey::K_DIM_EVENING_MIN:
-            s.evening_minutes_dimming_mn = static_cast<uint16_t>(std::clamp(val, 0, 600));
+            s.evening_minutes_dimming = static_cast<uint16_t>(std::clamp(val, 0, 600));
             break;
         case SettingKey::K_DIM_MORNING_MIN:
-            s.morning_minutes_dimming_mn = static_cast<uint16_t>(std::clamp(val, 0, 600));
+            s.morning_minutes_dimming = static_cast<uint16_t>(std::clamp(val, 0, 600));
             break;
         case SettingKey::K_DIMMING_PCT:
             s.dimming_pct = static_cast<uint8_t>(std::clamp(val, 0, 100));
@@ -246,10 +251,11 @@ void print_settings(const DeviceSettings &s) {
 
     std::cout << "\n-- Device Settings (V" << static_cast<unsigned int>(s.hw_version)
               << ") ----------------------------------\n";
-    std::cout
-        << "  Battery type     : "
-        << batt_names[static_cast<size_t>(std::clamp(static_cast<int>(s.battery_type_index), 0, 2))]
-        << " (index " << static_cast<int>(s.battery_type_index) << ")\n";
+    std::cout << "  Battery type     : "
+              << batt_names[static_cast<size_t>(std::clamp(
+                     static_cast<int>(s.battery_type.value_or(mppt::BATTERY_LFP_HIGH_TEMP)), 0, 2))]
+              << " (index " << static_cast<int>(s.battery_type.value_or(mppt::BATTERY_LFP_HIGH_TEMP))
+              << ")\n";
     std::cout << "  Capacity         : " << s.capacity_ah << " Ah\n";
     std::cout << "  LVD mode         : " << (s.lvd_mode_voltage ? "voltage" : "current") << "\n";
     std::cout << std::fixed << std::setprecision(3);
@@ -258,18 +264,22 @@ void print_settings(const DeviceSettings &s) {
     std::cout << "  LVD current reg  : " << mv_to_v(s.lvd_level_current_mv)
               << " V    LVD voltage reg: " << mv_to_v(s.lvd_level_voltage_mv) << " V\n";
     std::cout << "  Night threshold  : " << mv_to_v(s.night_threshold_mv) << " V\n";
-    std::cout
-        << "  Night mode       : "
-        << NIGHT_MODES[static_cast<size_t>(std::clamp(static_cast<int>(s.night_mode_index), 0, 3))]
-        << " (index " << static_cast<int>(s.night_mode_index) << ")\n";
-    std::cout << "  Evening mins     : " << s.evening_minutes_mn << " min\n";
-    std::cout << "  Morning mins     : " << s.morning_minutes_mn << " min\n";
+    std::cout << "  Night mode       : "
+              << NIGHT_MODES[static_cast<size_t>(std::clamp(
+                     static_cast<int>(s.night_mode_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON)), 0, 3))]
+              << " (index "
+              << static_cast<int>(s.night_mode_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON)) << ")\n";
+    std::cout << "  Evening mins     : " << s.evening_minutes << " min\n";
+    std::cout << "  Morning mins     : " << s.morning_minutes << " min\n";
     std::cout << "  Dim mode         : "
-              << NIGHT_MODES[static_cast<size_t>(
-                     std::clamp(static_cast<int>(s.night_mode_dimming_index), 0, 3))]
-              << " (index " << static_cast<int>(s.night_mode_dimming_index) << ")\n";
-    std::cout << "  Dim evening mins : " << s.evening_minutes_dimming_mn << " min\n";
-    std::cout << "  Dim morning mins : " << s.morning_minutes_dimming_mn << " min\n";
+              << NIGHT_MODES[static_cast<size_t>(std::clamp(
+                     static_cast<int>(s.night_mode_dimming_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON)),
+                     0, 3))]
+              << " (index "
+              << static_cast<int>(s.night_mode_dimming_index.value_or(mppt::NIGHT_MODE_ALWAYS_ON))
+              << ")\n";
+    std::cout << "  Dim evening mins : " << s.evening_minutes_dimming << " min\n";
+    std::cout << "  Dim morning mins : " << s.morning_minutes_dimming << " min\n";
     std::cout << "  Dimming          : " << static_cast<int>(s.dimming_pct) << "%\n";
     std::cout << "  Base dimming     : " << static_cast<int>(s.base_dimming_pct) << "%\n";
     std::cout << "  DALI             : " << (s.dali_power_enable ? "enabled" : "disabled") << "\n";

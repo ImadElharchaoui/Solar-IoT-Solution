@@ -6,6 +6,6 @@
     "@flowfuse/node-red-dashboard": "1.30.2",
     "node-red-contrib-influxdb": "0.7.0",
     "node-red-contrib-protobuf": "1.1.2",
-    "node-red-node-email": "5.2.2"
+    "node-red-node-email": "5.2.3"
   }
 }

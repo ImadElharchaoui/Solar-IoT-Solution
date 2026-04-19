@@ -2,19 +2,21 @@
 
 #include <cstdint>
 
+#include "../proto_gen/mppt.pb.h"
+
 // Derives the charge mode string from the chargeState bitmask (Space line field
 // 14)
-inline auto charge_mode_from_state(int charge_state) -> const char * {
+inline auto charge_mode_from_state(int charge_state) -> mppt::ChargeMode {
     if ((charge_state & 0x20) == 0x20) {
-        return "Disabled";
+        return mppt::ChargeMode::CHARGE_MODE_DISABLED;
     }
     if ((charge_state & 0x01) == 0x01) {
-        return "Boost";
+        return mppt::ChargeMode::CHARGE_MODE_BOOST;
     }
     if ((charge_state & 0x02) == 0x02) {
-        return "Equalization";
+        return mppt::ChargeMode::CHARGE_MODE_EQUALIZATION;
     }
-    return "Float";
+    return mppt::ChargeMode::CHARGE_MODE_FLOAT;
 }
 
 inline auto led_status_name(uint8_t s) -> const char * {
@@ -34,28 +36,28 @@ inline auto led_status_name(uint8_t s) -> const char * {
 //   V2 (0x52):  0 = AGM/Gel,              1 = Liquid,              2 = LiFePO4
 //   V3 (0x56):  0 = LiFePO4 - High Temp,  1 = LiFePO4 - Medium Temp,  2 =
 //   LiFePO4 - Low Temp
-inline auto battery_type_name(int idx, int hw_version) -> const char * {
+inline auto battery_type_name(int idx, int hw_version) -> mppt::BatteryType {
     if (hw_version == 2) {
         switch (idx) {
             case 0:
-                return "AGM/Gel";
+                return mppt::BatteryType::BATTERY_AGM;
             case 1:
-                return "Liquid";
+                return mppt::BatteryType::BATTERY_LIQUID;
             case 2:
-                return "LiFePO4";
+                return mppt::BatteryType::BATTERY_LFP;
             default:
-                return "Unknown";
+                return mppt::BatteryType::BATTERY_TYPE_UNKNOWN;
         }
     } else {
         switch (idx) {
             case 0:
-                return "LiFePO4 - High Temp";
+                return mppt::BatteryType::BATTERY_LFP_HIGH_TEMP;
             case 1:
-                return "LiFePO4 - Medium Temp";
+                return mppt::BatteryType::BATTERY_LFP_MEDIUM_TEMP;
             case 2:
-                return "LiFePO4 - Low Temp";
+                return mppt::BatteryType::BATTERY_LFP_LOW_TEMP;
             default:
-                return "Unknown";
+                return mppt::BatteryType::BATTERY_TYPE_UNKNOWN;
         }
     }
 }
