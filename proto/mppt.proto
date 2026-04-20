@@ -148,7 +148,7 @@ message Telemetry {
   uint32 timestamp = 1;
 
   uint32 battery_voltage_mv      = 2;
-  uint32 battery_soc_pct         = 3;
+  float  battery_soc_pct         = 3;
   uint32 charge_current_ma10     = 4;
   uint32 charge_power_w          = 5;
   uint32 end_of_charge_voltage_mv = 6;
@@ -220,10 +220,10 @@ message LogEntry {
   uint32 ah_load_mah     = 7;
   uint32 il_max_ma10     = 8;
   uint32 ipv_max_ma10    = 9;
-  uint32 soc_pct    = 10;
+  float  soc_pct    = 10;
   sint32 ext_temp_max_c  = 11;
   sint32 ext_temp_min_c  = 12;
-  uint32 nightlength_min = 13;
+  uint32  nightlength_min = 13;
 
   // Packed StateFlags bitmask (replaces 9 bool fields)
   // bit 0=load_disconnect  bit 1=full_charge  bit 2=pv_over_current
@@ -238,9 +238,9 @@ message DataloggerPayload {
   uint32 recorded_days              = 2;
   uint32 days_with_lvd              = 3;
   uint32 months_without_full_charge = 4;
-  uint32 avg_morning_soc_pct       = 5;
-  uint32 total_ah_charge_mah        = 6;
-  uint32 total_ah_load_mah          = 7;
+  float  avg_morning_soc_pct       = 5;
+  float  total_ah_charge_mah        = 6;
+  float  total_ah_load_mah          = 7;
 
   repeated LogEntry daily_logs   = 8;
   repeated LogEntry monthly_logs = 9;
@@ -279,7 +279,7 @@ message DeviceSnapshot {
   bool       online           = 5;
   ChargeMode charge_mode      = 6;
   uint32     battery_voltage_mv = 7;
-  uint32     battery_soc_pct  = 8;
+  float      battery_soc_pct  = 8;
   uint32     charge_power_w   = 9;
   uint32     load_power_w     = 10;
   uint32     fault_mask       = 11;
