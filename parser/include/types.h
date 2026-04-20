@@ -154,7 +154,7 @@ struct DeviceSettings {
 // One parsed Space Command response
 struct PhocosTelemetry {
     // General
-    uint8_t  firmware_version = 0;
+    uint32_t firmware_version = 0;
     int16_t  internal_temp_c  = 0;
     int16_t  external_temp_c  = 0;
     uint16_t op_days          = 0;
@@ -280,7 +280,7 @@ struct LogEntry {
     uint16_t vpv_min_mv      = 0;
     uint16_t il_max_ma       = 0;
     uint16_t ipv_max_ma      = 0;
-    uint16_t soc_pct         = 0;
+    float    soc_pct         = 0.0F;
     int8_t   ext_temp_max_c  = 0;
     int8_t   ext_temp_min_c  = 0;
     uint16_t nightlength_min = 0;
@@ -332,8 +332,8 @@ struct EepromSettings {
 struct DataloggerSummary {
     uint16_t days_with_lvd              = 0;
     uint8_t  months_without_full_charge = 0;
-    uint16_t avg_morning_soc_pct        = 0;
-    uint16_t total_ah_charge            = 0;
-    uint16_t total_ah_load              = 0;
+    float    avg_morning_soc_pct        = 0;
+    float    total_ah_charge            = 0;
+    float    total_ah_load              = 0;
     uint16_t num_days                   = 0;
 };

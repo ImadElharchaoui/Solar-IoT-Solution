@@ -16,8 +16,6 @@ void print_system_state(const PhocosTelemetry &t, const EepromSettings &settings
     const std::string &serial   = !settings.serial_number.empty() ? settings.serial_number : "N/A";
     const std::string &prod_date =
         !settings.production_date.empty() ? settings.production_date : "N/A";
-    const std::string &bat_type =
-        !settings.battery_type.empty() ? settings.battery_type : "Unknown";
 
     std::cout << "\n╔══════════════════════════════════════════╗\n"
               << "║           System State                   ║\n"
@@ -39,15 +37,15 @@ void print_system_state(const PhocosTelemetry &t, const EepromSettings &settings
     row("Hardware Version", "V" + std::to_string(t.hw_version));
     row("Production Date", prod_date);
     row("Serial Number", serial);
-    row("Firmware Version", t.firmware_version);
+    row("Firmware Version", std::to_string(t.firmware_version));
     row("Internal Temp",
-        (t.internal_temp_c > 0 ? "+" : "") + std::to_string(t.internal_temp_c) + " °C");
+        (t.internal_temp_c > 0 ? "+" : "-") + std::to_string(t.internal_temp_c) + " °C");
     row("External Temp",
-        (t.external_temp_c > 0 ? "+" : "") + std::to_string(t.external_temp_c) + " °C");
+        (t.external_temp_c > 0 ? "+" : "-") + std::to_string(t.external_temp_c) + " °C");
     row("Controller Operation Time", std::to_string(t.op_days) + " Days");
 
     std::cout << "\n[Battery]\n";
-    row("Type", bat_type);
+    row("Type", battery_type_to_string(*settings.settings.battery_type));
 
     std::cout << std::fixed << std::setprecision(3);
     row("Voltage", mv_to_v(t.battery_voltage_mv), " V");
@@ -161,31 +159,31 @@ void print_eeprom_config(const EepromSettings &settings) {
     row("Production Date", settings.production_date);
 
     std::cout << "\n[Battery]\n";
-    row("Type", settings.battery_type);
+    row("Type", battery_type_to_string(*settings.settings.battery_type));
     row("Capacity", std::to_string(settings.settings.capacity_ah) + " Ah");
     row("Battery Op. Time", std::to_string(settings.battery_op_days) + " Days");
     std::cout << std::fixed << std::setprecision(3);
     row("LVD Voltage", mv_to_v(settings.settings.lvd_voltage_mv), " V");
-    row("LVD Mode", settings.settings.lvd_mode_voltage ? "Voltage" : "Current");
+    row("LVD Mode",
+        lvd_mode_to_string(settings.settings.lvd_mode_voltage ? mppt::LVD_MODE_VOLTAGE
+                                                              : mppt::LVD_MODE_SOC));
     row("Equalization Voltage", mv_to_v(settings.equalization_mv), " V");
     row("Boost Voltage", mv_to_v(settings.boost_mv), " V");
     row("Float Voltage", mv_to_v(settings.float_mv), " V");
     std::cout << std::fixed << std::setprecision(1);
-    row("Temp Compensation", static_cast<float>(settings.temp_comp_mv_per_c), " mV/°C");
+    row("Temp Compensation", settings.temp_comp_mv_per_c, " mV/°C");
 
     std::cout << "\n[Night Mode]\n";
     std::cout << std::fixed << std::setprecision(3);
     row("Night Threshold", mv_to_v(settings.settings.night_threshold_mv), " V");
-    row("Mode", settings.night_mode);
+    row("Mode", night_mode_to_string(*settings.settings.night_mode_index));
     row("Evening Duration", std::to_string(settings.settings.evening_minutes) + " min");
     row("Morning Duration", std::to_string(settings.settings.morning_minutes) + " min");
 
     std::cout << "\n[Dimming]\n";
-    row("Dimming Mode", settings.night_mode_dimming);
-    row("Evening Dim Duration",
-        std::to_string(settings.settings.evening_minutes_dimming) + " min");
-    row("Morning Dim Duration",
-        std::to_string(settings.settings.morning_minutes_dimming) + " min");
+    row("Dimming Mode", night_mode_to_string(*settings.settings.night_mode_dimming_index));
+    row("Evening Dim Duration", std::to_string(settings.settings.evening_minutes_dimming) + " min");
+    row("Morning Dim Duration", std::to_string(settings.settings.morning_minutes_dimming) + " min");
     row("Dimming Level", std::to_string(settings.settings.dimming_pct) + " %");
     row("Base Dimming Level", std::to_string(settings.settings.base_dimming_pct) + " %");
 
@@ -253,11 +251,11 @@ static void print_log_entries(const LogEntry *entries,
                   << mah_to_ah(e.ah_charge_mah) << std::setw(11) << mah_to_ah(e.ah_load_mah)
                   << std::setw(11) << mv_to_v(e.vpv_min_mv) << std::setw(11)
                   << mv_to_v(e.vpv_max_mv) << std::setw(11) << ma_to_a(e.il_max_ma) << std::setw(11)
-                  << ma_to_a(e.ipv_max_ma) << std::setw(9) << static_cast<double>(e.soc_pct)
-                  << std::setw(11) << static_cast<int>(e.ext_temp_min_c) << std::setw(11)
-                  << static_cast<int>(e.ext_temp_max_c) << std::setw(11)
-                  << static_cast<float>(e.nightlength_min) / 60.0F << format_state_flags(e.state)
-                  << "\n";
+                  << ma_to_a(e.ipv_max_ma) << std::setw(9) << std::fixed << std::setprecision(1)
+                  << e.soc_pct << std::setprecision(0) << std::setw(11)
+                  << static_cast<int>(e.ext_temp_min_c) << std::setw(11)
+                  << static_cast<int>(e.ext_temp_max_c) << std::setw(11) << std::setprecision(1)
+                  << e.nightlength_min / 60.0F << format_state_flags(e.state) << "\n";
     }
 }
 

@@ -19,6 +19,32 @@ inline auto charge_mode_from_state(int charge_state) -> mppt::ChargeMode {
     return mppt::ChargeMode::CHARGE_MODE_FLOAT;
 }
 
+inline auto charge_mode_to_string(mppt::ChargeMode mode) -> const char * {
+    switch (mode) {
+        case mppt::ChargeMode::CHARGE_MODE_FLOAT:
+            return "Float";
+        case mppt::ChargeMode::CHARGE_MODE_BOOST:
+            return "Boost";
+        case mppt::ChargeMode::CHARGE_MODE_EQUALIZATION:
+            return "Equalization";
+        case mppt::ChargeMode::CHARGE_MODE_DISABLED:
+            return "Disabled";
+        default:
+            return "Unknown";
+    }
+}
+
+inline auto lvd_mode_to_string(mppt::LvdMode mode) -> const char * {
+    switch (mode) {
+        case mppt::LvdMode::LVD_MODE_SOC:
+            return "SOC";
+        case mppt::LvdMode::LVD_MODE_VOLTAGE:
+            return "Voltage";
+        default:
+            return "Unknown";
+    }
+}
+
 inline auto led_status_name(uint8_t s) -> const char * {
     switch (s) {
         case 0:
@@ -27,6 +53,25 @@ inline auto led_status_name(uint8_t s) -> const char * {
             return "Short";
         case 2:
             return "Open";
+        default:
+            return "Unknown";
+    }
+}
+
+inline auto battery_type_to_string(mppt::BatteryType type) -> const char * {
+    switch (type) {
+        case mppt::BatteryType::BATTERY_AGM:
+            return "AGM/Gel";
+        case mppt::BatteryType::BATTERY_LIQUID:
+            return "Liquid";
+        case mppt::BatteryType::BATTERY_LFP:
+            return "LiFePO4";
+        case mppt::BatteryType::BATTERY_LFP_HIGH_TEMP:
+            return "LiFePO4 - High Temp";
+        case mppt::BatteryType::BATTERY_LFP_MEDIUM_TEMP:
+            return "LiFePO4 - Medium Temp";
+        case mppt::BatteryType::BATTERY_LFP_LOW_TEMP:
+            return "LiFePO4 - Low Temp";
         default:
             return "Unknown";
     }
@@ -89,17 +134,21 @@ inline auto resolve_hw_version(bool have_eeprom, uint8_t eeprom_hw, bool have_te
     return 3; // Default to V3
 }
 
-inline auto night_mode_name(int idx) -> const char * {
-    switch (idx) {
-        case 0:
+inline auto night_mode_to_string(mppt::NightMode mode) -> const char * {
+    switch (mode) {
+        case mppt::NightMode::NIGHT_MODE_ALWAYS_ON:
             return "Off";
-        case 1:
+        case mppt::NightMode::NIGHT_MODE_D2D:
             return "Dusk to Dawn (D2D)";
-        case 2:
+        case mppt::NightMode::NIGHT_MODE_DD:
             return "Dusk and Dawn (DD)";
-        case 3:
+        case mppt::NightMode::NIGHT_MODE_MN:
             return "Middle of the Night (MN)";
         default:
             return "Unknown";
     }
+}
+
+inline auto night_mode_name(int idx) -> const char * {
+    return night_mode_to_string(static_cast<mppt::NightMode>(idx));
 }

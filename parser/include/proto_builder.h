@@ -73,7 +73,7 @@
     out.set_index(e.index);
     out.set_vbat_min_mv(e.vbat_min_mv);
     out.set_vbat_max_mv(e.vbat_max_mv);
-    out.set_vpv_min_mv(e.vbat_min_mv);
+    out.set_vpv_min_mv(e.vpv_min_mv);
     out.set_vpv_max_mv(e.vpv_max_mv);
     out.set_ah_charge_mah(e.ah_charge_mah);
     out.set_ah_load_mah(e.ah_load_mah);
