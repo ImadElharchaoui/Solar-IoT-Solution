@@ -109,7 +109,7 @@ static auto log_entries_to_json(const LogEntry *entries, std::size_t count, cons
             {"vpv_min_v", mv_to_v(e.vpv_min_mv)},
             {"il_max_a", ma_to_a(e.il_max_ma)},
             {"ipv_max_a", ma_to_a(e.ipv_max_ma)},
-            {"soc_pct", round1(static_cast<double>(e.soc_pct))},
+            {"soc_pct", round1(e.soc_pct)},
             {"ext_temp_max_c", e.ext_temp_max_c},
             {"ext_temp_min_c", e.ext_temp_min_c},
             {"nightlength_min", e.nightlength_min},

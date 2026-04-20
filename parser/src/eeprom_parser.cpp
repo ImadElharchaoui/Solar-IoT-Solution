@@ -58,7 +58,7 @@ static auto parse_eeprom_settings(const std::vector<uint8_t> &data, EepromSettin
     cfg.settings.battery_type = static_cast<mppt::BatteryType>(
         std::clamp(static_cast<int>(byte_at(data, EEPROM_BATTERY_TYPE_OFFSET)), 0, 2));
     cfg.battery_type =
-        battery_type_name(static_cast<int>(*cfg.settings.battery_type), cfg.hw_version);
+        battery_type_to_string(battery_type_name(static_cast<int>(*cfg.settings.battery_type), cfg.hw_version));
 
     cfg.settings.capacity_ah = get_u16(data, EEPROM_CAPACITY_AH_OFFSET);
     cfg.battery_op_days      = get_u16(data, EEPROM_BAT_OP_DAYS_OFFSET);
@@ -86,14 +86,13 @@ static auto parse_eeprom_settings(const std::vector<uint8_t> &data, EepromSettin
 
     cfg.settings.night_mode_index = static_cast<mppt::NightMode>(
         std::clamp(static_cast<int>(byte_at(data, EEPROM_NIGHT_MODE_OFFSET)), 0, 3));
-    cfg.night_mode = night_mode_name(static_cast<int>(*cfg.settings.night_mode_index));
+    cfg.night_mode               = night_mode_to_string(*cfg.settings.night_mode_index);
     cfg.settings.evening_minutes = get_u16(data, EEPROM_EVENING_MINUTES_OFFSET);
     cfg.settings.morning_minutes = get_u16(data, EEPROM_MORNING_MINUTES_OFFSET);
 
     cfg.settings.night_mode_dimming_index = static_cast<mppt::NightMode>(
         std::clamp(static_cast<int>(byte_at(data, EEPROM_DIM_MODE_OFFSET)), 0, 3));
-    cfg.night_mode_dimming =
-        night_mode_name(static_cast<int>(*cfg.settings.night_mode_dimming_index));
+    cfg.night_mode_dimming = night_mode_to_string(*cfg.settings.night_mode_dimming_index);
     cfg.settings.evening_minutes_dimming = get_u16(data, EEPROM_DIM_EVENING_OFFSET);
     cfg.settings.morning_minutes_dimming = get_u16(data, EEPROM_DIM_MORNING_OFFSET);
     cfg.settings.dimming_pct             = byte_at(data, EEPROM_DIMMING_PCT_OFFSET);
@@ -119,21 +118,21 @@ static auto parse_log_block(const std::vector<uint8_t> &data,
         return false;
     }
 
-    float soc_raw = static_cast<float>(byte_at(data, offset + 10)) * 6.6F;
+    float soc_raw = byte_at(data, offset + 10) * 6.6F;
 
     entry.index           = index;
-    entry.vbat_max_mv     = static_cast<uint16_t>(byte_at(data, offset) * 100);
-    entry.vbat_min_mv     = static_cast<uint16_t>(byte_at(data, offset + 1) * 100);
-    entry.ah_charge_mah   = static_cast<uint32_t>(get_u16(data, offset + 2)) * ah_multiplier;
-    entry.ah_load_mah     = static_cast<uint32_t>(get_u16(data, offset + 4)) * ah_multiplier;
-    entry.vpv_max_mv      = static_cast<uint16_t>(byte_at(data, offset + 6) * 500);
-    entry.vpv_min_mv      = static_cast<uint16_t>(byte_at(data, offset + 7) * 500);
-    entry.il_max_ma       = static_cast<uint16_t>(byte_at(data, offset + 8) * 500);
-    entry.ipv_max_ma      = static_cast<uint16_t>(byte_at(data, offset + 9) * 500);
-    entry.soc_pct         = static_cast<uint16_t>((soc_raw >= 99.0F) ? 100.0F : soc_raw);
+    entry.vbat_max_mv     = byte_at(data, offset) * 100;
+    entry.vbat_min_mv     = byte_at(data, offset + 1) * 100;
+    entry.ah_charge_mah   = get_u16(data, offset + 2) * ah_multiplier;
+    entry.ah_load_mah     = get_u16(data, offset + 4) * ah_multiplier;
+    entry.vpv_max_mv      = byte_at(data, offset + 6) * 500;
+    entry.vpv_min_mv      = byte_at(data, offset + 7) * 500;
+    entry.il_max_ma       = byte_at(data, offset + 8) * 500;
+    entry.ipv_max_ma      = byte_at(data, offset + 9) * 500;
+    entry.soc_pct         = soc_raw >= 99.0F ? 100.0F : soc_raw;
     entry.ext_temp_max_c  = static_cast<int8_t>(byte_at(data, offset + 11));
     entry.ext_temp_min_c  = static_cast<int8_t>(byte_at(data, offset + 12));
-    entry.nightlength_min = static_cast<uint16_t>(byte_at(data, offset + 13) * 10);
+    entry.nightlength_min = byte_at(data, offset + 13) * 10;
     entry.state           = StateFlags::parse(get_u16(data, offset + 14));
 
     return true;
@@ -204,17 +203,13 @@ static auto parse_eeprom_bytes(const std::vector<uint8_t> &data,
     summary.days_with_lvd              = get_u16(data, S);
     summary.months_without_full_charge = byte_at(data, S + 2);
 
-    const uint16_t MORNING_SOC_SUM = get_u16(data, S + 4);
-    summary.total_ah_charge =
-        static_cast<uint16_t>(static_cast<float>(get_u32(data, S + 6)) / 10.0F);
-    summary.total_ah_load =
-        static_cast<uint16_t>(static_cast<float>(get_u32(data, S + 10)) / 10.0F);
-    summary.num_days = get_u16(data, S + 14);
+    const float MORNING_SOC_SUM = get_u16(data, S + 4);
+    summary.total_ah_charge     = static_cast<float>(get_u32(data, S + 6)) / 10.0F;
+    summary.total_ah_load       = static_cast<float>(get_u32(data, S + 10)) / 10.0F;
+    summary.num_days            = get_u16(data, S + 14);
 
-    summary.avg_morning_soc_pct = static_cast<uint16_t>(
-        (summary.num_days > 0)
-            ? (static_cast<float>(MORNING_SOC_SUM) * 6.6F / static_cast<float>(summary.num_days))
-            : 0.0F);
+    summary.avg_morning_soc_pct =
+        (summary.num_days > 0) ? (MORNING_SOC_SUM * 6.6F / summary.num_days) : 0.0F;
 
     parse_daily_logs(data, summary.num_days, daily_logs);
     parse_monthly_logs(data, summary.num_days, monthly_logs);

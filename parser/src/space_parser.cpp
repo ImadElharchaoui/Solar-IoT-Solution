@@ -70,7 +70,7 @@ auto parse_phocos_line(std::string_view resp, PhocosTelemetry &t) -> bool {
                 t.pwm_counts = static_cast<uint16_t>(V);
                 break;
             case FIELD_FIRMWARE_VERSION:
-                t.firmware_version = static_cast<uint8_t>(V);
+                t.firmware_version = static_cast<uint32_t>(V);
                 break;
 
             // Field 13: loadState - parse full bitmask into LoadStatusFlags
