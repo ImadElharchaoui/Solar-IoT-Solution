@@ -135,6 +135,9 @@ Parses a log file and publishes all found telemetry and datalogger records to th
 | `mppt/{zone}/{gateway}/{serial}/settings` | Current settings snapshot, QoS 1, retained |
 | `mppt/{zone}/{gateway}/{serial}/cmd` | Remote settings command (JSON array of raw commands) |
 | `mppt/{zone}/{gateway}/{serial}/ack` | Remote command acknowledgment |
+|`mppt/{zone}/{gateway}/{serial}/datalog/summary` | EEPROM history summary | `solar_history` bucket |
+| `mppt/{zone}/{gateway}/{serial}/datalog/daily`   | Daily log entries      | `solar_history` bucket |
+| `mppt/{zone}/{gateway}/{serial}/datalog/monthly` | Monthly log entries    | `solar_history` bucket |
 
 The `settings` and `info` topics are published once on startup (or when using `--settings`). After a write, `state` and `settings` are re-published to reflect the new configuration.
 

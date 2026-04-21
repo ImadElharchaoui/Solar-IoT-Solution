@@ -20,15 +20,13 @@
     return bytes;
 }
 
-[[nodiscard]] inline auto fault_mask(const PhocosTelemetry &t) -> uint32_t {
-    return t.fault_flags.to_bitmask();
-}
-
 [[nodiscard]] inline auto build_fault_status_proto(const PhocosTelemetry &t, std::time_t ts)
     -> mppt::FaultStatus {
     mppt::FaultStatus msg;
     msg.set_timestamp(static_cast<uint32_t>(ts));
-    msg.set_fault_mask(fault_mask(t));
+    msg.set_fault_mask(t.fault_flags.to_bitmask());
+    msg.set_load_state_mask(t.load_state_raw);
+    msg.set_charge_state_mask(t.charge_state_raw);
     return msg;
 }
 
@@ -44,10 +42,12 @@
 
     msg.set_battery_voltage_mv(t.battery_voltage_mv);
     msg.set_battery_soc_pct(t.battery_soc_pct);
-    msg.set_charge_current_ma10(t.charge_current_ma / 10);
+    msg.set_charge_current_ma10(t.charge_current_ma);
     msg.set_charge_power_w(t.charge_power_w);
     msg.set_end_of_charge_voltage_mv(t.battery_threshold_mv);
     msg.set_charge_mode(charge_mode_from_state(t.charge_state_raw));
+    msg.set_charge_state_mask(t.charge_state_raw);
+
     msg.set_bat_op_days(t.bat_op_days);
     msg.set_energy_in_daily_wh(t.energy_in_daily_wh);
     msg.set_energy_out_daily_wh(t.energy_out_daily_wh);
@@ -62,9 +62,14 @@
     msg.set_average_length_min(t.avg_nightlength_min);
 
     msg.set_led_voltage_mv(t.led_voltage_mv);
-    msg.set_led_current_ma10(t.led_current_ma / 10);
+    msg.set_led_current_ma10(t.led_current_ma);
     msg.set_led_power_w(t.led_power_w);
 
+    msg.set_load_state_mask(t.load_state_raw);
+    msg.set_led_status(static_cast<mppt::LedStatus>(t.led_status));
+
+    msg.set_fault_mask(t.fault_flags.to_bitmask());
+    msg.set_flags(t.to_bitmask());
     return msg;
 }
 
@@ -77,20 +82,21 @@
     out.set_vpv_max_mv(e.vpv_max_mv);
     out.set_ah_charge_mah(e.ah_charge_mah);
     out.set_ah_load_mah(e.ah_load_mah);
-    out.set_il_max_ma10(e.il_max_ma / 10);
-    out.set_ipv_max_ma10(e.ipv_max_ma / 10);
+    out.set_il_max_ma10(e.il_max_ma);
+    out.set_ipv_max_ma10(e.ipv_max_ma);
     out.set_soc_pct(e.soc_pct);
     out.set_ext_temp_max_c(e.ext_temp_max_c);
     out.set_ext_temp_min_c(e.ext_temp_min_c);
     out.set_nightlength_min(e.nightlength_min);
+    out.set_state_flags(e.state.to_bitmask());
 
     return out;
 }
 
-[[nodiscard]] inline auto build_datalogger_proto(const DataloggerSummary &summary,
-                                                 const DailyLogBuffer    &days,
-                                                 const MonthlyLogBuffer  &months,
-                                                 std::time_t ts) -> mppt::DataloggerPayload {
+[[nodiscard]] inline auto build_datalogger_summary_proto(const DataloggerSummary &summary,
+
+                                                         std::time_t ts)
+    -> mppt::DataloggerPayload {
     mppt::DataloggerPayload msg;
 
     msg.set_timestamp(static_cast<uint32_t>(ts));
@@ -102,9 +108,26 @@
     msg.set_total_ah_charge_mah(summary.total_ah_charge);
     msg.set_total_ah_load_mah(summary.total_ah_load);
 
+    return msg;
+}
+
+[[nodiscard]] inline auto build_datalogger_daily_proto(const DailyLogBuffer &days, std::time_t ts)
+    -> mppt::DataloggerPayload {
+    mppt::DataloggerPayload msg;
+    msg.set_timestamp(static_cast<uint32_t>(ts));
+
     for (std::size_t i = 0; i < days.count; ++i) {
         *msg.add_daily_logs() = build_log_entry_proto(days.entries[i]);
     }
+    return msg;
+}
+
+[[nodiscard]] inline auto build_datalogger_monthly_proto(const MonthlyLogBuffer &months,
+                                                         std::time_t             ts)
+    -> mppt::DataloggerPayload {
+    mppt::DataloggerPayload msg;
+    msg.set_timestamp(static_cast<uint32_t>(ts));
+
     for (std::size_t i = 0; i < months.count; ++i) {
         *msg.add_monthly_logs() = build_log_entry_proto(months.entries[i]);
     }
@@ -112,12 +135,14 @@
     return msg;
 }
 
-[[nodiscard]] inline auto build_device_info_proto(const EepromSettings &cfg, std::time_t ts)
-    -> mppt::DeviceInfo {
+[[nodiscard]] inline auto build_device_info_proto(const EepromSettings &cfg,
+                                                  uint32_t              fw_version,
+                                                  std::time_t           ts) -> mppt::DeviceInfo {
     mppt::DeviceInfo msg;
     msg.set_production_date(cfg.production_date);
     msg.set_device_type(cfg.device_id);
     msg.set_hw_version(cfg.hw_version);
+    msg.set_firmware_version(fw_version);
     msg.set_equalization_voltage_mv(cfg.equalization_mv);
     msg.set_boost_voltage_mv(cfg.boost_mv);
     msg.set_float_voltage_mv(cfg.float_mv);
@@ -195,34 +220,59 @@ build_command_ack(std::string_view request_id, bool ok, std::string_view reason,
         s.battery_type = p.battery_type();
     }
 
-    s.capacity_ah    = static_cast<uint16_t>(p.capacity_ah());
-    s.lvd_voltage_mv = static_cast<uint16_t>(p.lvd_voltage_mv());
+    if (p.has_capacity_ah()) {
+        s.capacity_ah = static_cast<uint16_t>(p.capacity_ah());
+    }
+
+    if (p.has_lvd_voltage_mv()) {
+        s.lvd_voltage_mv = static_cast<uint16_t>(p.lvd_voltage_mv());
+    }
 
     if (p.has_lvd_mode()) {
-        s.lvd_mode_voltage = (static_cast<uint16_t>(p.lvd_mode()) != 0U);
+        s.lvd_mode_voltage = (p.lvd_mode() == mppt::LVD_MODE_VOLTAGE);
     }
 
     if (p.has_night_mode()) {
         s.night_mode_index = p.night_mode();
     }
 
+    if (p.has_evening_minutes()) {
+        s.evening_minutes = static_cast<uint16_t>(p.evening_minutes());
+    }
+
+    if (p.has_morning_minutes()) {
+        s.morning_minutes = static_cast<uint16_t>(p.morning_minutes());
+    }
+
+    if (p.has_night_threshold_mv()) {
+        s.night_threshold_mv = static_cast<uint16_t>(p.night_threshold_mv());
+    }
+
     if (p.has_dimming_mode()) {
         s.night_mode_dimming_index = p.dimming_mode();
     }
 
-    s.evening_minutes         = static_cast<uint16_t>(p.evening_minutes());
-    s.morning_minutes         = static_cast<uint16_t>(p.morning_minutes());
-    s.night_threshold_mv      = static_cast<uint16_t>(p.night_threshold_mv());
-    s.evening_minutes_dimming = static_cast<uint16_t>(p.evening_minutes_dimming());
-    s.morning_minutes_dimming = static_cast<uint16_t>(p.morning_minutes_dimming());
+    if (p.has_evening_minutes_dimming()) {
+        s.evening_minutes_dimming = static_cast<uint16_t>(p.evening_minutes_dimming());
+    }
 
-    s.dimming_pct      = static_cast<uint8_t>(p.dimming_pct());
-    s.base_dimming_pct = static_cast<uint8_t>(p.base_dimming_pct());
+    if (p.has_morning_minutes_dimming()) {
+        s.morning_minutes_dimming = static_cast<uint16_t>(p.morning_minutes_dimming());
+    }
 
-    uint32_t flags = p.advanced_flags();
+    if (p.has_dimming_pct()) {
+        s.dimming_pct = static_cast<uint8_t>(p.dimming_pct());
+    }
 
-    s.dali_power_enable  = (flags & (1 << 0)) != 0;
-    s.alc_dimming_enable = (flags & (1 << 1)) != 0;
+    if (p.has_base_dimming_pct()) {
+        s.base_dimming_pct = static_cast<uint8_t>(p.base_dimming_pct());
+    }
+
+    if (p.has_advanced_flags()) {
+        const uint32_t flags = p.advanced_flags();
+        s.dali_power_enable  = (flags & (1 << 0)) != 0;
+        s.alc_dimming_enable = (flags & (1 << 1)) != 0;
+    }
 
     return s;
 }

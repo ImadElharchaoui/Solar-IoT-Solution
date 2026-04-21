@@ -96,7 +96,8 @@ static void publish_all(MqttClient              &mqtt,
     }
 
     if (publish_static && have_eeprom) {
-        const std::string BUF = proto_to_string(build_device_info_proto(settings, ts));
+        const std::string BUF =
+            proto_to_string(build_device_info_proto(settings, tele.firmware_version, ts));
         mqtt.publish(base_topic + "/info", BUF, /*retain=*/true, /*qos=*/1);
         std::cerr << "[mqtt] -> /info     " << BUF.size() << " B  [retained]\n";
     }
@@ -114,7 +115,7 @@ static void publish_all(MqttClient              &mqtt,
     }
 
     if (have_tele && tele.hw_version == 3) {
-        const uint32_t CURRENT_MASK = fault_mask(tele);
+        const uint32_t CURRENT_MASK = tele.to_bitmask();
         if (CURRENT_MASK != g_last_fault_mask) {
             // We publish if there is ANY fault, OR if there WAS a fault and now there isn't (to
             // clear the retained message).
@@ -130,10 +131,21 @@ static void publish_all(MqttClient              &mqtt,
     }
 
     if (have_eeprom) {
-        const std::string BUF =
-            proto_to_string(build_datalogger_proto(summary, daily, monthly, ts));
-        mqtt.publish(base_topic + "/datalog", BUF, /*retain=*/true, /*qos=*/1);
-        std::cerr << "[mqtt] -> /datalog  " << BUF.size() << " B\n";
+        {
+            const std::string BUF = proto_to_string(build_datalogger_summary_proto(summary, ts));
+            mqtt.publish(base_topic + "/datalog/summary", BUF, /*retain=*/true, /*qos=*/1);
+            std::cerr << "[mqtt] -> /datalog/summary  " << BUF.size() << " B\n";
+        }
+        if (daily.count > 0) {
+            const std::string BUF = proto_to_string(build_datalogger_daily_proto(daily, ts));
+            mqtt.publish(base_topic + "/datalog/daily", BUF, /*retain=*/true, /*qos=*/1);
+            std::cerr << "[mqtt] -> /datalog/daily    " << BUF.size() << " B\n";
+        }
+        if (monthly.count > 0) {
+            const std::string BUF = proto_to_string(build_datalogger_monthly_proto(monthly, ts));
+            mqtt.publish(base_topic + "/datalog/monthly", BUF, /*retain=*/true, /*qos=*/1);
+            std::cerr << "[mqtt] -> /datalog/monthly  " << BUF.size() << " B\n";
+        }
     }
 }
 

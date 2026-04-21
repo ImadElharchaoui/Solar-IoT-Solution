@@ -11,7 +11,7 @@
 #include <cstring>
 #include <string>
 
-static constexpr size_t SERIAL_MAX_LINE = 4096;
+static constexpr size_t SERIAL_MAX_LINE = 8192;
 
 inline auto open_serial(const char *path) -> int {
     int fd = open(path, O_RDWR | O_NOCTTY | O_SYNC);

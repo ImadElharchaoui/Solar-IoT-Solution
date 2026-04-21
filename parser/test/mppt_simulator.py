@@ -128,7 +128,7 @@ class SimDevice:
         self._burst_sent = False
 
         # Incremental delta tracking
-        self._delta_daily:   dict[int, dict] = {}
+        self._delta_daily: dict[int, dict] = {}
         self._delta_monthly: dict[int, dict] = {}
 
     @staticmethod
@@ -192,12 +192,13 @@ class SimDevice:
             self.led_v = self._jitter(12.0, 0.02) if night else self._jitter(0.2, 0.10)
             self.led_i = self._jitter(0.85, 0.05) if night else 0.0
 
-        for fault in list(self.faults):
-            self.faults[fault] = (
-                random.random() < 0.02
-            )
-        if self.soc < 5.0:
-            self.faults["lvd_active"] = True
+        # Randomly toggle some faults using the bitmasks
+        for name, bit in FAULT_BITS.items():
+            if random.random() < 0.05:
+                self.faults[name] = not self.faults[name]
+
+        # Override specific faults
+        self.faults["lvd_active"] = self.soc < 5.0
         self.faults["controller_over_temp"] = self.temp_int > 45.0
         self.faults["battery_over_temp"] = self.temp_int > 50.0
         self.faults["battery_under_temp"] = self.temp_ext < 12.0
@@ -211,10 +212,10 @@ class SimDevice:
             "vbat_max_mv": int(round(base_vbat + _rnd(0.2, 0.8, 3), 3) * 1000),
             "vpv_min_mv": int(round(max(0.0, base_vpv - _rnd(5.0, 10.0, 3)), 3) * 1000),
             "vpv_max_mv": int(base_vpv * 1000),
-            "ah_charge_mah": int(_rnd(10.0, 70.0, 1) * 1000),
-            "ah_load_mah": int(_rnd(8.0, 60.0, 1) * 1000),
-            "il_max_ma10": int(_rnd(0.5, 12.0, 2) * 100),
-            "ipv_max_ma10": int(_rnd(1.0, 10.0, 2) * 100),
+            "ah_charge_mah": int(_rnd(10.0, 70.0, 1)),
+            "ah_load_mah": int(_rnd(8.0, 60.0, 1)),
+            "il_max_ma10": int(_rnd(0.5, 12.0, 2) * 10),
+            "ipv_max_ma10": int(_rnd(1.0, 10.0, 2) * 10),
             "soc_pct": int(_rnd_int(5, 100)),
             "ext_temp_max_c": _rnd_int(18, 45),
             "ext_temp_min_c": _rnd_int(5, 20),
@@ -231,18 +232,16 @@ class SimDevice:
             "vbat_max_mv": int(_rnd(13.5, 14.2, 3) * 1000),
             "vpv_min_mv": int(_rnd(3.0, 7.0, 3) * 1000),
             "vpv_max_mv": int(_rnd(17.0, 22.0, 3) * 1000),
-            "ah_charge_mah": int(
-                round(200.0 + season * 700.0 + _rnd(-50, 50, 1), 1) * 1000
-            ),
-            "ah_load_mah": int(
-                round(150.0 + season * 500.0 + _rnd(-30, 30, 1), 1) * 1000
-            ),
-            "il_max_ma10": int(_rnd(1.0, 4.0, 2) * 100),
-            "ipv_max_ma10": int(_rnd(2.0, 8.0, 2) * 100),
+            "ah_charge_mah": int(round(200.0 + season * 700.0 + _rnd(-50, 50, 1), 1)),
+            "ah_load_mah": int(round(150.0 + season * 500.0 + _rnd(-30, 30, 1), 1)),
+            "il_max_ma10": int(_rnd(1.0, 4.0, 2) * 10),
+            "ipv_max_ma10": int(_rnd(2.0, 8.0, 2) * 10),
             "soc_pct": int(_rnd_int(20, 90)),
             "ext_temp_max_c": _rnd_int(20, 50),
             "ext_temp_min_c": _rnd_int(0, 20),
             "nightlength_min": _rnd_int(540, 720),
+            "flag_full_charge": month % 4 == 0,
+            "flag_low_soc": random.random() > 0.8,
         }
 
     def apply_settings(self, ps: mppt_pb2.DeviceSettings, client: mqtt.Client):
@@ -329,8 +328,6 @@ class SimDevice:
     def get_info_proto(self) -> bytes:
         msg = mppt_pb2.DeviceInfo()
         msg.production_date = "2024-03-15"
-        msg.manufacturer_id = ""
-        msg.device_identifier = self.device_id
         msg.hw_version = self.hw
         msg.firmware_version = 17
         msg.device_type = "MPPT"
@@ -372,12 +369,14 @@ class SimDevice:
         msg.internal_temp_c = int(self.temp_int)
         msg.external_temp_c = int(self.temp_ext)
         msg.controller_op_days = 350
-        msg.battery_voltage_mv = int(self.vbat * 1000)
+        msg.battery_voltage_mv = int(self.vbat)
         msg.battery_soc_pct = int(self.soc)
         msg.charge_current_ma10 = int(self.ichg * 100)
         msg.charge_power_w = int(self.ichg * self.vbat)
         msg.end_of_charge_voltage_mv = int(self.vpv_target * 1000)
-        msg.charge_mode = CHARGE_MODE_MAP.get(self.charge_mode, mppt_pb2.CHARGE_MODE_DISABLED)
+        msg.charge_mode = CHARGE_MODE_MAP.get(
+            self.charge_mode, mppt_pb2.CHARGE_MODE_DISABLED
+        )
         msg.bat_op_days = 350
         msg.energy_in_daily_wh = 450
         msg.energy_out_daily_wh = 380
@@ -388,6 +387,8 @@ class SimDevice:
         msg.load_power_w = int(self.iload * self.vbat)
         msg.time_since_dusk_min = 0
         msg.average_length_min = 640
+        msg.fault_mask = self.get_fault_mask()
+        
         flags = 0
         flags |= 1 << 0
         if self.charge_mode == "Float" and random.random() > 0.9:
@@ -399,7 +400,7 @@ class SimDevice:
         msg.flags = flags
         if self.hw == 3:
             msg.led_voltage_mv = int(self.led_v * 1000)
-            msg.led_current_ma10 = int(self.led_i * 100)
+            msg.led_current_ma10 = int(self.led_i * 1000 / 10)
             msg.led_power_w = int(self.led_v * self.led_i)
             msg.led_status = mppt_pb2.LED_NORMAL
         return msg.SerializeToString()
@@ -418,9 +419,9 @@ class SimDevice:
         msg.recorded_days = TOTAL_DAYS
         msg.days_with_lvd = _rnd_int(0, 5)
         msg.months_without_full_charge = _rnd_int(0, 2)
-        msg.avg_morning_soc_pct = int(_rnd(20.0, 80.0, 1) * 100)
-        msg.total_ah_charge_mah = int(_rnd(800.0, 8000.0, 1) * 1000)
-        msg.total_ah_load_mah = int(_rnd(700.0, 7000.0, 1) * 1000)
+        msg.avg_morning_soc_pct = int(_rnd(20.0, 80.0, 1))
+        msg.total_ah_charge_mah = int(_rnd(800.0, 8000.0, 1))
+        msg.total_ah_load_mah = int(_rnd(700.0, 7000.0, 1))
         return msg
 
     @staticmethod
@@ -439,17 +440,34 @@ class SimDevice:
         entry.ext_temp_min_c = row["ext_temp_min_c"]
         entry.nightlength_min = row["nightlength_min"]
         sf = 0
-        if row.get("flag_low_soc"): sf |= 1 << 5
-        if row.get("flag_full_charge"): sf |= 1 << 1
+        if row.get("flag_low_soc"):
+            sf |= 1 << 5
+        if row.get("flag_full_charge"):
+            sf |= 1 << 1
         entry.state_flags = sf
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"[MQTT] Connected (rc={reason_code})")
     for dev in userdata["devices"]:
-        client.publish(TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial), "1", qos=1, retain=True)
-        client.publish(TOPIC_INFO.format(gw=dev.gateway, serial=dev.serial), dev.get_info_proto(), qos=1, retain=True)
-        client.publish(TOPIC_SETTINGS.format(gw=dev.gateway, serial=dev.serial), dev.get_settings_proto(), qos=1, retain=True)
+        client.publish(
+            TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial),
+            "1",
+            qos=1,
+            retain=True,
+        )
+        client.publish(
+            TOPIC_INFO.format(gw=dev.gateway, serial=dev.serial),
+            dev.get_info_proto(),
+            qos=1,
+            retain=True,
+        )
+        client.publish(
+            TOPIC_SETTINGS.format(gw=dev.gateway, serial=dev.serial),
+            dev.get_settings_proto(),
+            qos=1,
+            retain=True,
+        )
         cmd_topic = TOPIC_CMD.format(serial=dev.serial)
         client.subscribe(cmd_topic, qos=1)
         print(f"  {dev.serial}  published info+settings  subscribed {cmd_topic}")
@@ -457,10 +475,12 @@ def on_connect(client, userdata, flags, reason_code, properties):
 
 def on_message(client, userdata, msg):
     parts = msg.topic.split("/")
-    if len(parts) < 4: return
+    if len(parts) < 4:
+        return
     serial = parts[3]
     dev = next((d for d in userdata["devices"] if d.serial == serial), None)
-    if dev is None: return
+    if dev is None:
+        return
     cmd = mppt_pb2.ControlCommand()
     try:
         cmd.ParseFromString(msg.payload)
@@ -506,8 +526,10 @@ def publish_loop(client, dev: SimDevice, lock: threading.Lock):
         dl_daily = dev._make_datalogger_base()
         dl_monthly = dev._make_datalogger_base()
         if not dev._burst_sent:
-            for row in dev._burst_daily: dev._fill_log_entry(dl_daily.daily_logs.add(), row)
-            for row in dev._burst_monthly: dev._fill_log_entry(dl_monthly.monthly_logs.add(), row)
+            for row in dev._burst_daily:
+                dev._fill_log_entry(dl_daily.daily_logs.add(), row)
+            for row in dev._burst_monthly:
+                dev._fill_log_entry(dl_monthly.monthly_logs.add(), row)
             dev._burst_sent = True
             should_dl_summary = should_dl_daily = should_dl_monthly = True
         elif not dev._new_day_sent and (now - dev._startup_time) > NEW_DAY_DELAY_S:
@@ -518,12 +540,25 @@ def publish_loop(client, dev: SimDevice, lock: threading.Lock):
             client.publish(topic_state, dev.get_telemetry_proto(), qos=0)
             current_mask = dev.get_fault_mask()
             if current_mask != dev._last_fault_mask or not dev._burst_sent:
-                client.publish(topic_faults, dev.get_fault_status_proto(), qos=1, retain=True)
+                client.publish(
+                    topic_faults, dev.get_fault_status_proto(), qos=1, retain=True
+                )
                 dev._last_fault_mask = current_mask
-            if should_dl_summary: client.publish(topic_summary, dl_summary.SerializeToString(), qos=1, retain=True)
-            if should_dl_daily: client.publish(topic_daily, dl_daily.SerializeToString(), qos=1, retain=True)
-            if should_dl_monthly: client.publish(topic_monthly, dl_monthly.SerializeToString(), qos=1, retain=True)
-        print(f"  -> {dev.serial:<10} {dev.charge_mode:<14} SOC={dev.soc:5.1f}%  Vbat={dev.vbat:5.3f}V")
+            if should_dl_summary:
+                client.publish(
+                    topic_summary, dl_summary.SerializeToString(), qos=1, retain=True
+                )
+            if should_dl_daily:
+                client.publish(
+                    topic_daily, dl_daily.SerializeToString(), qos=1, retain=True
+                )
+            if should_dl_monthly:
+                client.publish(
+                    topic_monthly, dl_monthly.SerializeToString(), qos=1, retain=True
+                )
+        print(
+            f"  -> {dev.serial:<10} {dev.charge_mode:<14} SOC={dev.soc:5.1f}%  Vbat={dev.vbat:5.3f}V"
+        )
         time.sleep(PUBLISH_INTERVAL_S)
 
 
@@ -542,17 +577,29 @@ def main():
     time.sleep(0.6)
     print(f"\nSimulator running - publishing every {PUBLISH_INTERVAL_S}s")
     lock = threading.Lock()
-    threads = [threading.Thread(target=publish_loop, args=(client, dev, lock), daemon=True) for dev in devices]
-    for t in threads: t.start()
+    threads = [
+        threading.Thread(target=publish_loop, args=(client, dev, lock), daemon=True)
+        for dev in devices
+    ]
+    for t in threads:
+        t.start()
     try:
-        while True: time.sleep(1)
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
         print("\n[Stopped by user]")
     finally:
-        for dev in devices: client.publish(TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial), "0", qos=1, retain=True)
+        for dev in devices:
+            client.publish(
+                TOPIC_ONLINE.format(gw=dev.gateway, serial=dev.serial),
+                "0",
+                qos=1,
+                retain=True,
+            )
         time.sleep(0.3)
         client.loop_stop()
         client.disconnect()
+
 
 if __name__ == "__main__":
     main()

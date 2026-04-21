@@ -207,6 +207,38 @@ struct PhocosTelemetry {
 
     // Set by parser from semicolon count, not from a protocol field
     uint8_t hw_version = 3;
+
+    [[nodiscard]] auto to_bitmask() const -> uint32_t {
+        uint32_t f = 0;
+        if (battery_detected != 0U) {
+            f |= (1U << 0);
+        }
+        if (charge_flags.is_night) {
+            f |= (1U << 1);
+        }
+        if (load_flags.load_on()) {
+            f |= (1U << 2);
+        }
+        if (load_flags.night_mode_active) {
+            f |= (1U << 3);
+        }
+        if (load_flags.lvd_active) {
+            f |= (1U << 4);
+        }
+        if (load_flags.user_disconnect) {
+            f |= (1U << 5);
+        }
+        if (load_flags.over_current) {
+            f |= (1U << 6);
+        }
+        if (pv_detected != 0U) {
+            f |= (1U << 7);
+        }
+        if (dali_active != 0U) {
+            f |= (1U << 8);
+        }
+        return f;
+    }
 };
 
 struct StateFlags {

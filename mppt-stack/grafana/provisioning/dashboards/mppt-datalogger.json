@@ -338,7 +338,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
+          "decimals": 2,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -349,7 +349,7 @@
               }
             ]
           },
-          "unit": "amph"
+          "unit": "mAh"
         },
         "overrides": []
       },
@@ -385,7 +385,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_summary\")\n  |> filter(fn: (r) => r._field == \"total_ah_charge\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> last()\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_summary\")\n  |> filter(fn: (r) => r._field == \"total_ah_charge_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> last()\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
           "refId": "A"
         }
       ],
@@ -403,7 +403,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 0,
+          "decimals": 2,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -414,7 +414,7 @@
               }
             ]
           },
-          "unit": "amph"
+          "unit": "mamph"
         },
         "overrides": []
       },
@@ -450,7 +450,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_summary\")\n  |> filter(fn: (r) => r._field == \"total_ah_load\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> last()\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_summary\")\n  |> filter(fn: (r) => r._field == \"total_ah_load_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> last()\n  |> keep(columns: [\"_time\", \"_value\", \"_field\"])",
           "refId": "A"
         }
       ],
@@ -576,7 +576,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amph"
+                "value": "mamph"
               },
               {
                 "id": "decimals",
@@ -592,7 +592,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amph"
+                "value": "mamph"
               },
               {
                 "id": "decimals",
@@ -608,7 +608,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
@@ -647,7 +647,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
@@ -690,11 +690,11 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
-                "value": 1
+                "value": 2
               }
             ]
           },
@@ -706,7 +706,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amp"
+                "value": "mamp"
               },
               {
                 "id": "decimals",
@@ -758,7 +758,7 @@
               },
               {
                 "id": "decimals",
-                "value": 0
+                "value": 2
               }
             ]
           }
@@ -778,7 +778,7 @@
       "pluginVersion": "12.4.1",
       "targets": [
         {
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) =>\n      r._field == \"day_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge\" or r._field == \"ah_load\" or\n      r._field == \"vbat_max_v\" or r._field == \"vbat_min_v\" or\n      r._field == \"vpv_max_v\" or r._field == \"il_max_a\" or\n      r._field == \"ext_temp_max_c\" or r._field == \"ext_temp_min_c\" or\n      r._field == \"nightlength_min\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"day_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"day_num\"], desc: false)\n  |> rename(columns: {\n      day_num: \"Day\", soc_pct: \"SOC %\",\n      ah_charge: \"Ah In\", ah_load: \"Ah Out\",\n      vbat_max_v: \"V Bat Max\", vbat_min_v: \"V Bat Min\",\n      vpv_max_v: \"V PV Max\", il_max_a: \"Load A Max\",\n      ext_temp_max_c: \"T Max °C\", ext_temp_min_c: \"T Min °C\",\n      nightlength_min: \"Night min\",\n  })\n  |> keep(columns: [\"Day\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) =>\n      r._field == \"day_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"il_max_ma10\" or\n      r._field == \"ext_temp_max_c\" or r._field == \"ext_temp_min_c\" or\n      r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"day_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"day_num\"], desc: false)\n  |> rename(columns: {\n      day_num: \"Day\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", il_max_ma10: \"Load A Max\",\n      ext_temp_max_c: \"T Max °C\", ext_temp_min_c: \"T Min °C\",\n      nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Day\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
           "refId": "A"
         }
       ],
@@ -792,6 +792,7 @@
               "Ah In": 2,
               "Ah Out": 3,
               "Day": 0,
+              "Faults": 11,
               "Load A Max": 7,
               "Night min": 10,
               "SOC %": 1,
@@ -852,7 +853,6 @@
             }
           },
           "mappings": [],
-          "min": 9,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -862,7 +862,7 @@
               }
             ]
           },
-          "unit": "volt"
+          "unit": "mvolt"
         },
         "overrides": [
           {
@@ -935,7 +935,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vbat_min_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V Bat Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vbat_min_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V Bat Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Min\"])",
           "refId": "A"
         },
         {
@@ -943,7 +943,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vbat_max_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V Bat Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Max\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vbat_max_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V Bat Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Max\"])",
           "refId": "B"
         }
       ],
@@ -996,7 +996,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1116,6 +1115,7 @@
             }
           },
           "mappings": [],
+          "max": 60,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1258,7 +1258,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1268,7 +1267,7 @@
               }
             ]
           },
-          "unit": "volt"
+          "unit": "mvolt"
         },
         "overrides": [
           {
@@ -1340,7 +1339,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vpv_min_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V PV Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vpv_min_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V PV Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Min\"])",
           "refId": "A"
         },
         {
@@ -1348,7 +1347,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vpv_max_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V PV Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Max\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"vpv_max_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"V PV Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Max\"])",
           "refId": "B"
         }
       ],
@@ -1400,8 +1399,8 @@
               "mode": "off"
             }
           },
+          "fieldMinMax": false,
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1411,7 +1410,7 @@
               }
             ]
           },
-          "unit": "amph"
+          "unit": "mamph"
         },
         "overrides": [
           {
@@ -1484,7 +1483,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"ah_charge\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"Charge Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Charge Ah\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"ah_charge_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"Charge Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Charge Ah\"])",
           "refId": "A"
         },
         {
@@ -1492,7 +1491,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"ah_load\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"Load Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Load Ah\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) => r._field == \"ah_load_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (30 - int(v: r.day_index)) * 86400000000000)), \"Load Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Load Ah\"])",
           "refId": "B"
         }
       ],
@@ -1531,7 +1530,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1727,7 +1725,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amph"
+                "value": "mamph"
               },
               {
                 "id": "decimals",
@@ -1743,11 +1741,10 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amph"
+                "value": "mamph"
               },
               {
-                "id": "decimals",
-                "value": 0
+                "id": "decimals"
               }
             ]
           },
@@ -1759,7 +1756,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
@@ -1775,7 +1772,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
@@ -1818,11 +1815,11 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "volt"
+                "value": "mvolt"
               },
               {
                 "id": "decimals",
-                "value": 1
+                "value": 2
               }
             ]
           },
@@ -1834,7 +1831,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amp"
+                "value": "mamp"
               },
               {
                 "id": "decimals",
@@ -1850,7 +1847,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "amp"
+                "value": "mamp"
               },
               {
                 "id": "decimals",
@@ -1902,7 +1899,7 @@
               },
               {
                 "id": "decimals",
-                "value": 0
+                "value": 2
               }
             ]
           }
@@ -1922,7 +1919,7 @@
       "pluginVersion": "12.4.1",
       "targets": [
         {
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) =>\n      r._field == \"month_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge\" or r._field == \"ah_load\" or\n      r._field == \"vbat_max_v\" or r._field == \"vbat_min_v\" or\n      r._field == \"vpv_max_v\" or r._field == \"ipv_max_a\" or\n      r._field == \"il_max_a\" or r._field == \"ext_temp_max_c\" or\n      r._field == \"ext_temp_min_c\" or r._field == \"nightlength_min\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"month_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"month_num\"], desc: false)\n  |> rename(columns: {\n      month_num: \"Month\", soc_pct: \"SOC %\",\n      ah_charge: \"Ah In\", ah_load: \"Ah Out\",\n      vbat_max_v: \"V Bat Max\", vbat_min_v: \"V Bat Min\",\n      vpv_max_v: \"V PV Max\", ipv_max_a: \"PV A Max\",\n      il_max_a: \"Load A Max\", ext_temp_max_c: \"T Max °C\",\n      ext_temp_min_c: \"T Min °C\", nightlength_min: \"Night min\",\n  })\n  |> keep(columns: [\"Month\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"PV A Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) =>\n      r._field == \"month_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"ipv_max_ma10\" or\n      r._field == \"il_max_ma10\" or r._field == \"ext_temp_max_c\" or\n      r._field == \"ext_temp_min_c\" or r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"month_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"month_num\"], desc: false)\n  |> rename(columns: {\n      month_num: \"Month\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", ipv_max_ma10: \"PV A Max\",\n      il_max_ma10: \"Load A Max\", ext_temp_max_c: \"T Max °C\",\n      ext_temp_min_c: \"T Min °C\", nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Month\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"PV A Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
           "refId": "A"
         }
       ],
@@ -1935,6 +1932,7 @@
             "indexByName": {
               "Ah In": 2,
               "Ah Out": 3,
+              "Faults": 12,
               "Load A Max": 8,
               "Month": 0,
               "Night min": 11,
@@ -1997,7 +1995,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2007,7 +2004,7 @@
               }
             ]
           },
-          "unit": "amph"
+          "unit": "mamph"
         },
         "overrides": [
           {
@@ -2081,7 +2078,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"ah_charge\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"Charge Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Charge Ah\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"ah_charge_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"Charge Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Charge Ah\"])",
           "refId": "A"
         },
         {
@@ -2089,7 +2086,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"ah_load\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"Load Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Load Ah\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"ah_load_mah\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"Load Ah\": r._value}))\n  |> keep(columns: [\"_time\", \"Load Ah\"])",
           "refId": "B"
         }
       ],
@@ -2141,7 +2138,6 @@
             }
           },
           "mappings": [],
-          "min": 9,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2151,7 +2147,7 @@
               }
             ]
           },
-          "unit": "volt"
+          "unit": "mvolt"
         },
         "overrides": [
           {
@@ -2224,7 +2220,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vbat_min_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V Bat Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vbat_min_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V Bat Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Min\"])",
           "refId": "A"
         },
         {
@@ -2232,7 +2228,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vbat_max_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V Bat Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Max\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vbat_max_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V Bat Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V Bat Max\"])",
           "refId": "B"
         }
       ],
@@ -2284,7 +2280,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2403,8 +2398,9 @@
               "mode": "off"
             }
           },
+          "fieldMinMax": false,
           "mappings": [],
-          "min": 0,
+          "max": 30000,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2414,7 +2410,7 @@
               }
             ]
           },
-          "unit": "volt"
+          "unit": "mvolt"
         },
         "overrides": [
           {
@@ -2486,7 +2482,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vpv_min_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V PV Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vpv_min_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V PV Min\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Min\"])",
           "refId": "A"
         },
         {
@@ -2494,7 +2490,7 @@
             "type": "influxdb",
             "uid": "influxdb-solar-history"
           },
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vpv_max_v\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V PV Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Max\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) => r._field == \"vpv_max_mv\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> map(fn: (r) => ({_time: time(v: uint(v: now()) - uint(v: (12 - int(v: r.month_index)) * 2592000000000000)), \"V PV Max\": r._value}))\n  |> keep(columns: [\"_time\", \"V PV Max\"])",
           "refId": "B"
         }
       ],
@@ -2533,7 +2529,6 @@
             }
           },
           "mappings": [],
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2624,8 +2619,8 @@
     "list": [
       {
         "current": {
-          "text": "0166-18",
-          "value": "0166-18"
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "influxdb",
@@ -2646,13 +2641,13 @@
     ]
   },
   "time": {
-    "from": "now-1y",
-    "to": "now"
+    "from": "2026-03-23T00:57:11.890Z",
+    "to": "2026-03-30T00:57:11.912Z"
   },
   "timepicker": {},
   "timezone": "browser",
   "title": "📊 MPPT Solar - Datalogger",
   "uid": "mppt-datalogger",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
