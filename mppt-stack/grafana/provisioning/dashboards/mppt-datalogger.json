@@ -579,8 +579,7 @@
                 "value": "mamph"
               },
               {
-                "id": "decimals",
-                "value": 1
+                "id": "decimals"
               }
             ]
           },
@@ -778,7 +777,7 @@
       "pluginVersion": "12.4.1",
       "targets": [
         {
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) =>\n      r._field == \"day_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"il_max_ma10\" or\n      r._field == \"ext_temp_max_c\" or r._field == \"ext_temp_min_c\" or\n      r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"day_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"day_num\"], desc: false)\n  |> rename(columns: {\n      day_num: \"Day\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", il_max_ma10: \"Load A Max\",\n      ext_temp_max_c: \"T Max °C\", ext_temp_min_c: \"T Min °C\",\n      nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Day\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -35d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_daily\")\n  |> filter(fn: (r) =>\n      r._field == \"day_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"il_max_ma\" or\n      r._field == \"ext_temp_max_c\" or r._field == \"ext_temp_min_c\" or\n      r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"day_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"day_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"day_num\"], desc: false)\n  |> rename(columns: {\n      day_num: \"Day\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", il_max_ma: \"Load A Max\",\n      ext_temp_max_c: \"T Max °C\", ext_temp_min_c: \"T Min °C\",\n      nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Day\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
           "refId": "A"
         }
       ],
@@ -1729,7 +1728,7 @@
               },
               {
                 "id": "decimals",
-                "value": 0
+                "value": 3
               }
             ]
           },
@@ -1744,7 +1743,8 @@
                 "value": "mamph"
               },
               {
-                "id": "decimals"
+                "id": "decimals",
+                "value": 3
               }
             ]
           },
@@ -1775,8 +1775,7 @@
                 "value": "mvolt"
               },
               {
-                "id": "decimals",
-                "value": 2
+                "id": "decimals"
               },
               {
                 "id": "thresholds",
@@ -1919,7 +1918,7 @@
       "pluginVersion": "12.4.1",
       "targets": [
         {
-          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) =>\n      r._field == \"month_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"ipv_max_ma10\" or\n      r._field == \"il_max_ma10\" or r._field == \"ext_temp_max_c\" or\n      r._field == \"ext_temp_min_c\" or r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"month_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"month_num\"], desc: false)\n  |> rename(columns: {\n      month_num: \"Month\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", ipv_max_ma10: \"PV A Max\",\n      il_max_ma10: \"Load A Max\", ext_temp_max_c: \"T Max °C\",\n      ext_temp_min_c: \"T Min °C\", nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Month\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"PV A Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
+          "query": "_s = \"${serial}\"\nfrom(bucket: \"solar_history\")\n  |> range(start: -400d)\n  |> filter(fn: (r) => r._measurement == \"datalogger_monthly\")\n  |> filter(fn: (r) =>\n      r._field == \"month_num\" or r._field == \"soc_pct\" or\n      r._field == \"ah_charge_mah\" or r._field == \"ah_load_mah\" or\n      r._field == \"vbat_max_mv\" or r._field == \"vbat_min_mv\" or\n      r._field == \"vpv_max_mv\" or r._field == \"ipv_max_ma\" or\n      r._field == \"il_max_ma\" or r._field == \"ext_temp_max_c\" or\n      r._field == \"ext_temp_min_c\" or r._field == \"nightlength_min\" or r._field == \"load_disconnect\" or\n      r._field == \"full_charge\" or r._field == \"pv_over_current\" or\n      r._field == \"load_over_current\" or r._field == \"battery_over_voltage\" or r._field == \"low_soc\")\n  |> filter(fn: (r) => _s == \"$__all\" or _s == \"\" or r.serial == _s)\n  |> group(columns: [\"serial\", \"month_index\", \"_field\"])\n  |> last()\n  |> group()\n  |> pivot(rowKey: [\"month_index\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> sort(columns: [\"month_num\"], desc: false)\n  |> rename(columns: {\n      month_num: \"Month\", soc_pct: \"SOC %\",\n      ah_charge_mah: \"Ah In\", ah_load_mah: \"Ah Out\",\n      vbat_max_mv: \"V Bat Max\", vbat_min_mv: \"V Bat Min\",\n      vpv_max_mv: \"V PV Max\", ipv_max_ma: \"PV A Max\",\n      il_max_ma: \"Load A Max\", ext_temp_max_c: \"T Max °C\",\n      ext_temp_min_c: \"T Min °C\", nightlength_min: \"Night min\"\n  })\n  |> keep(columns: [\"Month\",\"SOC %\",\"Ah In\",\"Ah Out\",\"V Bat Max\",\"V Bat Min\",\"V PV Max\",\"PV A Max\",\"Load A Max\",\"T Max °C\",\"T Min °C\",\"Night min\"])",
           "refId": "A"
         }
       ],
@@ -2641,8 +2640,8 @@
     ]
   },
   "time": {
-    "from": "2026-03-23T00:57:11.890Z",
-    "to": "2026-03-30T00:57:11.912Z"
+    "from": "now-3h",
+    "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",

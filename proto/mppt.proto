@@ -193,8 +193,8 @@ message LogEntry {
   uint32 vpv_max_mv      = 5;
   uint32 ah_charge_mah   = 6;
   uint32 ah_load_mah     = 7;
-  uint32 il_max_ma10     = 8;
-  uint32 ipv_max_ma10    = 9;
+  uint32 il_max_ma     = 8;
+  uint32 ipv_max_ma    = 9;
   float  soc_pct    = 10;
   sint32 ext_temp_max_c  = 11;
   sint32 ext_temp_min_c  = 12;

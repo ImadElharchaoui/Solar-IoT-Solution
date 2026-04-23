@@ -67,8 +67,6 @@ enum LvdMode {
   LVD_MODE_VOLTAGE = 1;
 }
 
-// Bitmask constants
-//
 // LoadStateMask  (Space-cmd field 13)
 //   bit 0  = load_disconnected
 //   bit 1  = night_mode_active
@@ -94,28 +92,6 @@ enum LvdMode {
 //   bit 5  = over_discharge_current (0x20)
 //   bit 6  = battery_over_temp      (0x40)
 //   bit 7  = battery_under_temp     (0x80)
-//
-// TelemetryFlags  (packed bools from Telemetry, replaces 7 bool fields)
-//   bit 0  = battery_detected
-//   bit 1  = is_night
-//   bit 2  = load_on
-//   bit 3  = night_mode_active
-//   bit 4  = lvd_active
-//   bit 5  = user_disconnect
-//   bit 6  = load_over_current
-//   bit 7  = pv_detected
-//   bit 8  = dali_active
-//
-// StateFlags  (LogEntry, replaces 9 bool fields)
-//   bit 0  = load_disconnect
-//   bit 1  = full_charge
-//   bit 2  = pv_over_current
-//   bit 3  = load_over_current
-//   bit 4  = battery_over_voltage
-//   bit 5  = low_soc
-//   bit 6  = temp_over_pv_over
-//   bit 7  = temp_over_pv_low
-//   bit 8  = temp_over_load_over
 
 message DeviceInfo {
   string production_date   = 1;
@@ -217,8 +193,8 @@ message LogEntry {
   uint32 vpv_max_mv      = 5;
   uint32 ah_charge_mah   = 6;
   uint32 ah_load_mah     = 7;
-  uint32 il_max_ma10     = 8;
-  uint32 ipv_max_ma10    = 9;
+  uint32 il_max_ma     = 8;
+  uint32 ipv_max_ma    = 9;
   float  soc_pct    = 10;
   sint32 ext_temp_max_c  = 11;
   sint32 ext_temp_min_c  = 12;
